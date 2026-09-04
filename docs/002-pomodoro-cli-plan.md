@@ -1,7 +1,7 @@
-# 001 — Pomodoro CLI Plan
+# 002 — Pomodoro CLI Plan
 
 Status: accepted. Grounds the MVP in the current scaffold: `commander` program with
-`run(argv) => exit code` + `exitOverride`, single `tsup` entry (`src/cli.ts` → `dist/cli.js`),
+`run(argv) => exit code` + `exitOverride`, single `tsdown` entry (`src/cli.ts` → `dist/cli.js`),
 strict ESM TypeScript on Node >= 22, Vitest with `restoreMocks`.
 
 ## MVP behavior

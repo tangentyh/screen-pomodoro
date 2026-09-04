@@ -43,7 +43,7 @@ npm run dev -- --help    # …with arguments
 
 | Script                                          | What it does                                                |
 | ----------------------------------------------- | ----------------------------------------------------------- |
-| `npm run build`                                 | Bundle to `dist/` with tsup (ESM)                           |
+| `npm run build`                                 | Bundle to `dist/` with tsdown (ESM)                         |
 | `npm run dev`                                   | Run the CLI from source with tsx                            |
 | `npm run typecheck`                             | `tsc --noEmit`                                              |
 | `npm run lint`                                  | ESLint (flat config, type-checked rules)                    |

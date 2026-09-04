@@ -9,8 +9,6 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
-    // tsup's dts builder injects baseUrl internally, which TS 6 deprecates.
-    "ignoreDeprecations": "6.0",
 
     "strict": true,
     "noUncheckedIndexedAccess": true,
