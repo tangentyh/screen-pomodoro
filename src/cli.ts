@@ -257,13 +257,20 @@ function startDriver(program: Command, config: PomodoroConfig, flags: DriverFlag
       const current = timer.phase;
       const next = peekNextPhase(current, timer.focusCount, config.cycles);
       const promptMsg = `${phaseLabel(current, names)} complete. Start ${phaseLabel(next, names)}? [y/n] `;
+      const promptAt = Date.now();
       process.stdout.write('\x07');
       const confirmed = await confirmFn(promptMsg);
       if (finished) return;
-      const now = Date.now();
+      const answerAt = Date.now();
+      // Freeze gating time: answering delay must not eat into the next phase.
+      // tick() anchors the next deadline to the previous deadline (preserving
+      // pre-prompt overshoot so a far-overshot phase re-prompts), then shift
+      // forward by the gating delay.
+      const gatingMs = Math.max(0, answerAt - promptAt);
       if (confirmed) {
-        timer.tick(now);
-        const line = buildPhaseLine(timer, config, names, now);
+        timer.tick(promptAt);
+        timer.shiftEndsAtMs(gatingMs);
+        const line = buildPhaseLine(timer, config, names, answerAt);
         if (flags.live) {
           process.stdout.write(`\n${line}\n`);
         } else {
@@ -276,7 +283,7 @@ function startDriver(program: Command, config: PomodoroConfig, flags: DriverFlag
         resumeTimers();
         return;
       }
-      timer.restartCurrentPhase(now);
+      timer.restartCurrentPhase(answerAt);
       const restarted = Date.now();
       const line = buildPhaseLine(timer, config, names, restarted);
       if (flags.live) {

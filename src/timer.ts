@@ -21,6 +21,7 @@ export interface PomodoroTimer {
   resume(reason: PauseReason, nowMs: number): void;
   nextPhase(nowMs: number): void;
   restartCurrentPhase(nowMs: number): void;
+  shiftEndsAtMs(deltaMs: number): void;
   remainingMs(nowMs: number): number;
 }
 
@@ -189,6 +190,17 @@ export function createTimer(config: PomodoroConfig): PomodoroTimer {
         endsAtMs = pausedAtMs + duration;
       } else {
         endsAtMs = nowMs + duration;
+      }
+    },
+
+    shiftEndsAtMs(deltaMs: number): void {
+      if (!started || !Number.isFinite(deltaMs) || deltaMs === 0) return;
+      // Shift the absolute deadline (used to freeze `--confirm` gating time
+      // so answering delay never eats into the next phase). Keeps frozen
+      // remaining consistent while paused. Pure, no node: imports.
+      endsAtMs += deltaMs;
+      if (paused) {
+        frozenRemainingMs += deltaMs;
       }
     },
   };

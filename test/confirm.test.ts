@@ -529,18 +529,26 @@ describe('003 — confirm gate', () => {
       '--confirm',
     ]);
     await advance(0);
-    // Jump far past several phases at once.
+    // Jump far past several phases at once. Gating time is frozen: the 9s
+    // spent awaiting the answer must not eat into the next phase, so one y
+    // advances exactly one phase with a fresh deadline (no cascade, no
+    // immediate expiry from the gating delay itself).
     await advance(10_000);
     expect(rl.questionSpy).toHaveBeenCalledTimes(1);
     rl.answerNext('y');
     await advance(0);
     await advance(0);
-    // Exactly one phase per answer: now in short break, and because it is
-    // already expired the driver prompts again instead of cascading.
+    // Exactly one phase per answer: now in short break with a fresh deadline.
     expect(stdoutText(out)).toContain('Short break');
+    expect(rl.questionSpy).toHaveBeenCalledTimes(1);
+    // Advancing past the short break's full (post-answer) duration prompts
+    // for the next transition instead of having cascaded earlier.
+    await advance(1_200);
+    await advance(0);
     expect(rl.questionSpy).toHaveBeenCalledTimes(2);
     rl.answerNext('y');
     await advance(0);
+    expect(stdoutText(out)).toContain('Focus 2/4');
     process.emit('SIGINT');
     await expect(runPromise).resolves.toBe(0);
   });
