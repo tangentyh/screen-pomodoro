@@ -27,9 +27,35 @@ Usage: screen-pomodoro [options]
 A pomodoro timer that pauses when your screen locks.
 
 Options:
-  -V, --version  Print the version number
-  -h, --help     Print help
+  -V, --version        Print the version number.
+  --focus <duration>   Focus duration (minutes or with s/m/h suffix). (default: "25")
+  --short <duration>   Short break duration (minutes or with s/m/h suffix). (default: "5")
+  --long <duration>    Long break duration (minutes or with s/m/h suffix). (default: "15")
+  --cycles <n>         Focuses per long break (integer >= 1). (default: "4")
+  --no-loop            Stop after the first long break instead of looping forever.
+  -q, --quiet          Log transitions only, no live countdown.
+  --confirm            Awaits y/n on each phase transition (requires interactive stdin).
+  --focus-name <name>  Custom label for focus phases. (default: "Focus")
+  --short-name <name>  Custom label for short breaks. (default: "Short break")
+  --long-name <name>   Custom label for long breaks. (default: "Long break")
+  -h, --help           display help for command
 ```
+
+Custom names appear in every phase line, pause/resume notice, confirm prompt,
+and summary (`--focus-name "Deep work"` → `Deep work 1/4`,
+`Completed 3 Deep work`). Names must be non-empty after trimming, at most 40
+characters, with no control characters.
+
+With `--confirm`, each deadline rings once and asks:
+
+```
+Deep work complete. Start Coffee? [y/n] y
+```
+
+`y` advances one phase, `n` restarts the current phase with a full deadline.
+Anything else re-prompts. `--confirm` needs an interactive terminal
+(`--confirm requires an interactive terminal` otherwise). `--no-loop` still
+exits after the long break without a trailing prompt.
 
 ## Development
 

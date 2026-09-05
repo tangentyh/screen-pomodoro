@@ -20,6 +20,7 @@ export interface PomodoroTimer {
   pause(reason: PauseReason, nowMs: number): void;
   resume(reason: PauseReason, nowMs: number): void;
   nextPhase(nowMs: number): void;
+  restartCurrentPhase(nowMs: number): void;
   remainingMs(nowMs: number): number;
 }
 
@@ -172,6 +173,20 @@ export function createTimer(config: PomodoroConfig): PomodoroTimer {
         // Keep the countdown frozen on the new phase.
         endsAtMs = pausedAtMs + duration;
         frozenRemainingMs = duration;
+      } else {
+        endsAtMs = nowMs + duration;
+      }
+    },
+
+    restartCurrentPhase(nowMs: number): void {
+      if (!started) return;
+      // Full restart of the current phase (`n` in --confirm): reset the
+      // absolute deadline to a full duration, keep phase + focusCount.
+      // Pure (no node: imports) so timer stays phase-enum-only per 003 D1.
+      const duration = durationForPhase(config, phase);
+      if (paused) {
+        frozenRemainingMs = duration;
+        endsAtMs = pausedAtMs + duration;
       } else {
         endsAtMs = nowMs + duration;
       }
