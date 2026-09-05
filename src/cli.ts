@@ -89,7 +89,50 @@ export function createStdinConfirmer(
           resolve(false);
           return;
         }
-        getInterface().question(message, (answer: string) => {
+        const iface = getInterface();
+        // If the interface closes without answering (Ctrl-D/EOF, or
+        // SIGINT cleanup closing readline), resolve instead of leaving the
+        // pending question — and the driver's top-level await — unsettled.
+        // Guarded for mocked interfaces in tests that only stub
+        // question()/close().
+        let onClose: (() => void) | undefined;
+        const maybeOnce = (iface as unknown as { once?: unknown }).once;
+        if (typeof maybeOnce === 'function') {
+          onClose = (): void => {
+            resolve(false);
+          };
+          try {
+            (iface as unknown as { once(event: string, cb: () => void): void }).once(
+              'close',
+              onClose,
+            );
+          } catch {
+            onClose = undefined;
+          }
+        }
+        const removeCloseListener = (): void => {
+          if (onClose === undefined) return;
+          try {
+            const maybeOff = (iface as unknown as { off?: unknown }).off;
+            if (typeof maybeOff === 'function') {
+              (iface as unknown as { off(event: string, cb: () => void): void }).off(
+                'close',
+                onClose,
+              );
+              return;
+            }
+            const maybeRemove = (iface as unknown as { removeListener?: unknown }).removeListener;
+            if (typeof maybeRemove === 'function') {
+              (
+                iface as unknown as { removeListener(event: string, cb: () => void): void }
+              ).removeListener('close', onClose);
+            }
+          } catch {
+            // Ignore listener-cleanup errors; resolve() stays idempotent.
+          }
+        };
+        iface.question(message, (answer: string) => {
+          removeCloseListener();
           if (isFinished()) {
             resolve(false);
             return;
@@ -190,7 +233,28 @@ function startDriver(program: Command, config: PomodoroConfig, flags: DriverFlag
   });
 
   function getReadline(): readline.Interface {
-    rl ??= readline.createInterface({ input: process.stdin, output: process.stdout });
+    if (rl === undefined) {
+      const created = readline.createInterface({ input: process.stdin, output: process.stdout });
+      rl = created;
+      // ^C while prompting arrives as a readline 'SIGINT' event (stdin is in
+      // raw mode during question()), not as a process SIGINT — without this
+      // the prompt never resolves and the top-level await stays unsettled
+      // (Node warns + exits 13). Ctrl-D/EOF closes the interface instead.
+      // Route both to the existing SIGINT path (summary + exit 0).
+      // Guarded: tests stub createInterface with question()/close() only.
+      try {
+        const maybeOn = (created as unknown as { on?: unknown }).on;
+        if (typeof maybeOn === 'function') {
+          const emitter = created as unknown as { on(event: string, cb: () => void): void };
+          emitter.on('SIGINT', onSigint);
+          emitter.on('close', () => {
+            if (!finished) onSigint();
+          });
+        }
+      } catch {
+        // Ignore listener-setup errors; process SIGINT path still applies.
+      }
+    }
     return rl;
   }
 
@@ -226,6 +290,7 @@ function startDriver(program: Command, config: PomodoroConfig, flags: DriverFlag
   }
 
   function onSigint(): void {
+    if (finished) return;
     process.stdout.write(`\n${buildSummaryLine(timer.focusCount, names)}\n`);
     finish();
   }

@@ -65,7 +65,8 @@ Refactor: `phaseLabel(phase, names)` + `buildPhaseLine(timer, config, names, now
 - Driver depends on a `confirm(msg): Promise<boolean>` seam, not on `readline` directly. Current impl is `stdinConfirmer` (`rl.question` loop). A future `notifConfirmer` (notification action buttons = `y/n`) implements the same interface; driver picks stdin if TTY else notif if available else fail-fast.
 - Confirm-pending state: suspend timers on deadline (`clearInterval` tick rendering in live mode; `clearTimeout` chain in quiet mode), record `promptAt`, `await ask(...)`, then commit (`y`: `tick(promptAt)` + `shift(answerAt - promptAt)`) or restart (`n`: `restartCurrentPhase(answerAt)`) and resume timers. Wall-clock movement while pending never shortens either outcome.
 - `readline.Interface` created lazily on first prompt, closed in `finish()` / `onSigint`.
-- `finish()` / `onSigint` also clear timers, remove SIGINT listener, close `readline`.
+- `finish()` / `onSigint` also clear timers, remove SIGINT listener, close `readline`. `onSigint` is idempotent.
+- `^C` while `question()` is pending arrives as a readline `'SIGINT'` event (stdin is in raw mode), not as `process` `SIGINT`; `Ctrl-D`/EOF arrives as `'close'`. Both route to `onSigint`, and a pending `question()` resolves on `'close'`, so the top-level await always settles (summary + exit 0, no unsettled-TLA warning).
 
 ## Tests
 
