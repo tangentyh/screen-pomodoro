@@ -9,6 +9,27 @@ A tiny CLI pomodoro timer that pauses when your screen locks.
 - Runnable via `npx` — no install step required
 - Fully typed TypeScript (strict, ESM), tested with Vitest
 
+## What is the Pomodoro Technique?
+
+The Pomodoro Technique is a simple time-management method created by
+Francesco Cirillo in the late 1980s (named after his tomato-shaped kitchen
+timer — _pomodoro_ is Italian for tomato). The idea:
+
+1. Pick one task and focus on it for a fixed interval (traditionally 25 minutes).
+2. Take a short break (traditionally 5 minutes) to rest and reset.
+3. After every few focus sessions (traditionally 4), take a longer break
+   (15–30 minutes).
+
+Working in short, deliberate bursts makes it easier to start, stay focused,
+and avoid burnout — and the regular breaks give your brain a chance to
+recharge.
+
+`screen-pomodoro` follows exactly this rhythm out of the box: it loops
+`Focus → Short break`, inserting a `Long break` after every `--cycles`
+focuses (4 by default), with the classic 25 / 5 / 15 minute defaults.
+The twist: it pauses automatically when your screen locks, so a coffee run
+or a chat never eats into your focus time.
+
 ## Quick start
 
 ```sh
