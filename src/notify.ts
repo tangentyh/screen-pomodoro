@@ -89,7 +89,8 @@ function notifyDurationMs(config: NotifyConfig, phase: NotifyPhase): number {
 }
 
 function focusCounter(config: NotifyConfig, focusCount: number): string {
-  const current = Math.min(focusCount + 1, config.cycles);
+  // Same per-set position as display.ts: wraps 1/M..M/M across sets.
+  const current = (focusCount % config.cycles) + 1;
   return `${String(current)}/${String(config.cycles)}`;
 }
 

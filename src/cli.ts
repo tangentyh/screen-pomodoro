@@ -174,8 +174,15 @@ function createProgram(): Command {
     .option('--focus <duration>', 'Focus duration (minutes or with s/m/h suffix).', '25')
     .option('--short <duration>', 'Short break duration (minutes or with s/m/h suffix).', '5')
     .option('--long <duration>', 'Long break duration (minutes or with s/m/h suffix).', '15')
-    .option('--cycles <n>', 'Focuses per long break (integer >= 1).', '4')
-    .option('--no-loop', 'Stop after the first long break instead of looping forever.')
+    .option(
+      '--cycles <n>',
+      'Focuses per long break (integer >= 1). Loops forever unless --no-loop is given.',
+      '4',
+    )
+    .option(
+      '--no-loop',
+      'Stop after the first long break (i.e. after --cycles focuses) instead of looping forever.',
+    )
     .option('-q, --quiet', 'Log transitions only, no live countdown.')
     .option('--confirm', 'Awaits y/n on each phase transition (requires interactive stdin).')
     .option(
@@ -435,7 +442,9 @@ function startDriver(program: Command, config: PomodoroConfig, flags: DriverFlag
   async function runConfirmFlow(): Promise<void> {
     while (!finished) {
       if (!flags.loop && timer.phase === 'longBreak' && timer.remainingMs(Date.now()) <= 0) {
-        process.stdout.write(`${buildSummaryLine(timer.focusCount, names)}\n`);
+        // Terminal long break: ring (phase-change parity) + summary only.
+        // No trailing prompt and no next-focus line — the timer exits.
+        process.stdout.write(`\x07${buildSummaryLine(timer.focusCount, names)}\n`);
         finish();
         return;
       }
@@ -510,13 +519,15 @@ function startDriver(program: Command, config: PomodoroConfig, flags: DriverFlag
     if (!gating) {
       const before = timer.phase;
       timer.tick(now);
-      process.stdout.write(`\x07\n${buildPhaseLine(timer, config, names, now)}\n`);
-      notifyEntered(before, timer.phase);
       if (!flags.loop && before === 'longBreak' && timer.phase === 'focus') {
-        process.stdout.write(`${buildSummaryLine(timer.focusCount, names)}\n`);
+        // Terminal long break: ring + summary only. Do not start (or notify)
+        // the next focus — the timer exits instead of looping.
+        process.stdout.write(`\x07\n${buildSummaryLine(timer.focusCount, names)}\n`);
         finish();
         return;
       }
+      process.stdout.write(`\x07\n${buildPhaseLine(timer, config, names, now)}\n`);
+      notifyEntered(before, timer.phase);
       return;
     }
     if (interval !== undefined) {
@@ -546,13 +557,14 @@ function startDriver(program: Command, config: PomodoroConfig, flags: DriverFlag
           armQuietTimeout();
           return;
         }
-        process.stdout.write(`\x07\n${buildPhaseLine(timer, config, names, now)}\n`);
-        notifyEntered(before, timer.phase);
         if (!flags.loop && before === 'longBreak' && timer.phase === 'focus') {
-          process.stdout.write(`${buildSummaryLine(timer.focusCount, names)}\n`);
+          // Terminal long break: ring + summary only (no next-focus line).
+          process.stdout.write(`\x07\n${buildSummaryLine(timer.focusCount, names)}\n`);
           finish();
           return;
         }
+        process.stdout.write(`\x07\n${buildPhaseLine(timer, config, names, now)}\n`);
+        notifyEntered(before, timer.phase);
         armQuietTimeout();
         return;
       }

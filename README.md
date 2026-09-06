@@ -31,8 +31,8 @@ Options:
   --focus <duration>   Focus duration (minutes or with s/m/h suffix). (default: "25")
   --short <duration>   Short break duration (minutes or with s/m/h suffix). (default: "5")
   --long <duration>    Long break duration (minutes or with s/m/h suffix). (default: "15")
-  --cycles <n>         Focuses per long break (integer >= 1). (default: "4")
-  --no-loop            Stop after the first long break instead of looping forever.
+  --cycles <n>         Focuses per long break (integer >= 1). Loops forever unless --no-loop is given. (default: "4")
+  --no-loop            Stop after the first long break (i.e. after --cycles focuses) instead of looping forever.
   -q, --quiet          Log transitions only, no live countdown.
   --confirm            Awaits y/n on each phase transition (requires interactive stdin).
   --notify             Send a macOS notification on each phase transition (macOS + terminal-notifier required).
@@ -58,6 +58,9 @@ Deep work complete. Start Coffee? [y/n] y
 Anything else re-prompts. `--confirm` needs an interactive terminal
 (`--confirm requires an interactive terminal` otherwise). `--no-loop` still
 exits after the long break without a trailing prompt.
+
+`--cycles` sets the long-break cadence; without `--no-loop` the timer loops
+forever (`--cycles 2 --no-loop` runs 2 focuses then exits).
 
 ## macOS notifications (`terminal-notifier`)
 

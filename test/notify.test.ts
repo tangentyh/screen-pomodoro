@@ -147,6 +147,11 @@ describe('004 — buildNotifyTitle (D9: entered side, counter focus-only)', () =
     expect(buildNotifyTitle('focus', CONFIG, DEFAULT_PHASE_NAMES, 1)).toBe('Focus 2/4');
   });
 
+  it('counter wraps per set: a full set later focusCount=4 is Focus 1/4 again', () => {
+    expect(buildNotifyTitle('focus', CONFIG, DEFAULT_PHASE_NAMES, 4)).toBe('Focus 1/4');
+    expect(buildNotifyTitle('focus', CONFIG, DEFAULT_PHASE_NAMES, 5)).toBe('Focus 2/4');
+  });
+
   it('startup focus is Focus 1/4', () => {
     expect(buildNotifyTitle('focus', CONFIG, DEFAULT_PHASE_NAMES, 0)).toBe('Focus 1/4');
   });

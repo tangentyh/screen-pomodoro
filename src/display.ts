@@ -67,7 +67,10 @@ export function buildPhaseLine(
 ): string {
   const clock = formatClock(timer.remainingMs(nowMs));
   if (timer.phase === 'focus') {
-    const current = Math.min(timer.focusCount + 1, config.cycles);
+    // Position within the current set so the counter cycles 1/M..M/M across
+    // sets instead of sticking at M/M once an infinite loop passes the
+    // first long break.
+    const current = (timer.focusCount % config.cycles) + 1;
     return `${phaseLabel(timer.phase, names)} ${String(current)}/${String(config.cycles)} — ${clock} remaining`;
   }
   return `${phaseLabel(timer.phase, names)} — ${clock} remaining`;

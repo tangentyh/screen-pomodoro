@@ -255,6 +255,62 @@ describe('cli', () => {
     expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
   });
 
+  it('--no-loop terminal rings + summary without starting the next focus', async () => {
+    vi.useFakeTimers();
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+
+    const runPromise = run([
+      '--focus',
+      '1s',
+      '--short',
+      '1s',
+      '--long',
+      '1s',
+      '--cycles',
+      '1',
+      '--quiet',
+      '--no-loop',
+    ]);
+    // focus(1s) + long(1s) = 2s, then exit.
+    await vi.advanceTimersByTimeAsync(3_000);
+    await expect(runPromise).resolves.toBe(0);
+    const text = stdoutText(out);
+    expect(text).toContain('\x07');
+    expect(text).toContain('Long break');
+    expect(text).toMatch(/Completed 1 focuses/);
+    // Exactly one focus line (startup): the terminal long break must not
+    // start — or print — the next focus before exiting.
+    expect(text.split('Focus').length - 1).toBe(1);
+    expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
+  });
+
+  it('focus counter wraps per set across long breaks (Focus 1/2 again, not stuck at 2/2)', async () => {
+    vi.useFakeTimers();
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+
+    const runPromise = run([
+      '--focus',
+      '1s',
+      '--short',
+      '1s',
+      '--long',
+      '1s',
+      '--cycles',
+      '2',
+      '--quiet',
+    ]);
+    await vi.advanceTimersByTimeAsync(0);
+    // focus + short + focus + long + into the next set's first focus.
+    await vi.advanceTimersByTimeAsync(4_500);
+    const text = stdoutText(out);
+    // Second set restarts at 1/2 instead of sticking at 2/2.
+    expect(text.split('Focus 1/2').length - 1).toBe(2);
+
+    process.emit('SIGINT');
+    await expect(runPromise).resolves.toBe(0);
+    expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
+  });
+
   it('cleans up timers, SIGINT handler, and monitor subscription on exit', async () => {
     vi.useFakeTimers();
     setIsTTY(true);

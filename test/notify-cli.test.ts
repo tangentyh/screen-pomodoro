@@ -584,4 +584,34 @@ describe('004 step 2 — --notify-confirm blocking gate', () => {
     expect(stdoutText(out)).not.toContain('Short break');
     expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
   });
+
+  it('--no-loop exits after the long break without a trailing toast prompt', async () => {
+    vi.useFakeTimers();
+    setPlatform('darwin');
+    setStdinIsTTY(false);
+    mockBinaryAvailable(['@ACTIONCLICKED']);
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const runPromise = run([
+      '--focus',
+      '1s',
+      '--short',
+      '1s',
+      '--long',
+      '1s',
+      '--cycles',
+      '1',
+      '--quiet',
+      '--no-loop',
+      '--notify-confirm',
+    ]);
+    await advance(0);
+    await advance(1_200);
+    await advance(0);
+    // focus -> long took one click; the terminal long break exits directly.
+    await advance(1_500);
+    await advance(0);
+    await expect(runPromise).resolves.toBe(0);
+    expect(confirmArgvs()).toHaveLength(1);
+    expect(stdoutText(out)).toMatch(/Completed 1 focuses/);
+  });
 });
