@@ -25,7 +25,12 @@ export interface PomodoroTimer {
   remainingMs(nowMs: number): number;
 }
 
-function durationForPhase(config: PomodoroConfig, phase: Phase): number {
+/**
+ * Nominal duration of a phase from config. Pure switch (no math change) —
+ * the shared lookup for both the timer core and the notify builders (004 D10),
+ * so spent/upcoming clocks never inflate with pause/gating/overshoot (D7).
+ */
+export function phaseDurationMs(config: PomodoroConfig, phase: Phase): number {
   switch (phase) {
     case 'focus':
       return config.focusMs;
@@ -34,6 +39,10 @@ function durationForPhase(config: PomodoroConfig, phase: Phase): number {
     case 'longBreak':
       return config.longBreakMs;
   }
+}
+
+function durationForPhase(config: PomodoroConfig, phase: Phase): number {
+  return phaseDurationMs(config, phase);
 }
 
 /**
