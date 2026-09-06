@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { execFile as execFileCallback } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import * as readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
@@ -12,6 +13,18 @@ import {
   phaseLabel,
   type PhaseNames,
 } from './display.js';
+import {
+  buildNotifyConfirmMessage,
+  buildNotifyConfirmTitle,
+  buildNotifyMessage,
+  buildNotifyTitle,
+  checkNotifierAvailable,
+  createNotificationConfirmer,
+  GROUP_ID,
+  isNotifySupported,
+  sendNotification,
+  type ExecFileFn,
+} from './notify.js';
 import { createTimer, parseDuration, type Phase, type PomodoroConfig } from './timer.js';
 import { NoopMonitor, type ScreenMonitor, type ScreenState } from './screen.js';
 
@@ -36,6 +49,8 @@ interface PomodoroOptions {
   loop: boolean;
   quiet: boolean;
   confirm: boolean;
+  notify: boolean;
+  notifyConfirm: boolean;
   focusName: string;
   shortName: string;
   longName: string;
@@ -163,6 +178,14 @@ function createProgram(): Command {
     .option('--no-loop', 'Stop after the first long break instead of looping forever.')
     .option('-q, --quiet', 'Log transitions only, no live countdown.')
     .option('--confirm', 'Awaits y/n on each phase transition (requires interactive stdin).')
+    .option(
+      '--notify',
+      'Send a macOS notification on each phase transition (macOS + terminal-notifier required).',
+    )
+    .option(
+      '--notify-confirm',
+      'Answer phase transitions by clicking the notification (click = yes, No = no). Implies the confirm gate; does not require interactive stdin.',
+    )
     .option('--focus-name <name>', 'Custom label for focus phases.', 'Focus')
     .option('--short-name <name>', 'Custom label for short breaks.', 'Short break')
     .option('--long-name <name>', 'Custom label for long breaks.', 'Long break');
@@ -189,9 +212,42 @@ function createProgram(): Command {
       throw err;
     }
 
+    const notify = raw.notify ?? false;
+    const notifyConfirm = raw.notifyConfirm ?? false;
+
+    if (notifyConfirm && raw.confirm) {
+      program.error('error: --notify-confirm cannot be used with --confirm (one source only)', {
+        exitCode: 1,
+      });
+      return;
+    }
+
+    if (notifyConfirm && notify) {
+      program.error('error: --notify-confirm cannot be used with --notify (one source only)', {
+        exitCode: 1,
+      });
+      return;
+    }
+
     if (raw.confirm && !process.stdin.isTTY) {
       program.error('--confirm requires an interactive terminal', { exitCode: 1 });
       return;
+    }
+
+    if ((notify || notifyConfirm) && !isNotifySupported()) {
+      const flag = notifyConfirm ? '--notify-confirm' : '--notify';
+      program.error(`error: ${flag} requires macOS (terminal-notifier)`, { exitCode: 1 });
+      return;
+    }
+
+    if (notify || notifyConfirm) {
+      try {
+        await checkNotifierAvailable();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        program.error(`error: ${message}`, { exitCode: 1 });
+        return;
+      }
     }
 
     const quiet = raw.quiet || !process.stdout.isTTY;
@@ -200,6 +256,8 @@ function createProgram(): Command {
       live: !quiet,
       names,
       confirm: raw.confirm,
+      notify,
+      notifyConfirm,
     });
   });
 
@@ -211,6 +269,8 @@ interface DriverFlags {
   live: boolean;
   names: PhaseNames;
   confirm: boolean;
+  notify: boolean;
+  notifyConfirm: boolean;
 }
 
 function startDriver(program: Command, config: PomodoroConfig, flags: DriverFlags): Promise<void> {
@@ -218,6 +278,9 @@ function startDriver(program: Command, config: PomodoroConfig, flags: DriverFlag
   const timer = createTimer(config);
   timer.start(Date.now());
   const names = flags.names;
+  const useNotify = flags.notify;
+  const useNotifyConfirm = flags.notifyConfirm;
+  const gating = flags.confirm || useNotifyConfirm;
 
   const monitor: ScreenMonitor = new NoopMonitor();
 
@@ -226,6 +289,61 @@ function startDriver(program: Command, config: PomodoroConfig, flags: DriverFlag
   let finished = false;
   let confirmPending = false;
   let rl: readline.Interface | undefined;
+  let pendingChild: { kill?: () => void } | undefined;
+
+  const notifyExec: ExecFileFn = (file, args) =>
+    new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+      let child: unknown;
+      try {
+        child = execFileCallback(file, [...args], (err, stdout, stderr) => {
+          if (pendingChild !== undefined && pendingChild === child) {
+            pendingChild = undefined;
+          }
+          if (err) {
+            reject(err instanceof Error ? err : new Error('terminal-notifier exec failed'));
+          } else {
+            resolve({ stdout: String(stdout), stderr: String(stderr) });
+          }
+        });
+      } catch (err) {
+        reject(err instanceof Error ? err : new Error('terminal-notifier exec failed'));
+        return;
+      }
+      if (args.includes('-action')) {
+        pendingChild = child as { kill?: () => void };
+      }
+    });
+
+  function notifyEntered(before: Phase | undefined, entered: Phase): void {
+    if (!useNotify || finished) return;
+    const title = buildNotifyTitle(entered, config, names, timer.focusCount);
+    const message = buildNotifyMessage(before, entered, config, names, timer.focusCount);
+    void sendNotification(notifyExec, { title, message });
+  }
+
+  function killPendingNotifier(): void {
+    const child = pendingChild;
+    pendingChild = undefined;
+    if (child !== undefined) {
+      try {
+        const maybeKill = (child as { kill?: unknown }).kill;
+        if (typeof maybeKill === 'function') {
+          (child as { kill: () => void }).kill();
+        }
+      } catch {
+        // Best-effort: a dead prompt must never block exit.
+      }
+    }
+  }
+
+  function removeToast(): void {
+    if (!useNotify && !useNotifyConfirm) return;
+    try {
+      execFileCallback('terminal-notifier', ['-remove', GROUP_ID], () => undefined);
+    } catch {
+      // Best-effort cleanup: ignore delivery/removal failures on exit.
+    }
+  }
 
   let resolveDriver: () => void = () => undefined;
   const done = new Promise<void>((resolve) => {
@@ -282,10 +400,12 @@ function startDriver(program: Command, config: PomodoroConfig, flags: DriverFlag
   function finish(): void {
     if (finished) return;
     finished = true;
+    killPendingNotifier();
     clearTimers();
     closeReadline();
     process.removeListener('SIGINT', onSigint);
     unsubscribe();
+    removeToast();
     resolveDriver();
   }
 
@@ -321,10 +441,23 @@ function startDriver(program: Command, config: PomodoroConfig, flags: DriverFlag
       }
       const current = timer.phase;
       const next = peekNextPhase(current, timer.focusCount, config.cycles);
-      const promptMsg = `${phaseLabel(current, names)} complete. Start ${phaseLabel(next, names)}? [y/n] `;
       const promptAt = Date.now();
-      process.stdout.write('\x07');
-      const confirmed = await confirmFn(promptMsg);
+      let confirmed: boolean;
+      if (useNotifyConfirm) {
+        const title = buildNotifyConfirmTitle(current, names);
+        const message = buildNotifyConfirmMessage(current, next, config, names, timer.focusCount);
+        process.stdout.write('\x07');
+        const confirmer = createNotificationConfirmer(notifyExec, {
+          title,
+          message,
+          isFinished: () => finished,
+        });
+        confirmed = await confirmer(message);
+      } else {
+        const promptMsg = `${phaseLabel(current, names)} complete. Start ${phaseLabel(next, names)}? [y/n] `;
+        process.stdout.write('\x07');
+        confirmed = await confirmFn(promptMsg);
+      }
       if (finished) return;
       const answerAt = Date.now();
       // Freeze gating time: answering delay must not eat into the next phase.
@@ -335,6 +468,7 @@ function startDriver(program: Command, config: PomodoroConfig, flags: DriverFlag
       if (confirmed) {
         timer.tick(promptAt);
         timer.shiftEndsAtMs(gatingMs);
+        notifyEntered(current, timer.phase);
         const line = buildPhaseLine(timer, config, names, answerAt);
         if (flags.live) {
           process.stdout.write(`\n${line}\n`);
@@ -373,10 +507,11 @@ function startDriver(program: Command, config: PomodoroConfig, flags: DriverFlag
       render(buildPhaseLine(timer, config, names, now));
       return;
     }
-    if (!flags.confirm) {
+    if (!gating) {
       const before = timer.phase;
       timer.tick(now);
       process.stdout.write(`\x07\n${buildPhaseLine(timer, config, names, now)}\n`);
+      notifyEntered(before, timer.phase);
       if (!flags.loop && before === 'longBreak' && timer.phase === 'focus') {
         process.stdout.write(`${buildSummaryLine(timer.focusCount, names)}\n`);
         finish();
@@ -404,7 +539,7 @@ function startDriver(program: Command, config: PomodoroConfig, flags: DriverFlag
         armQuietTimeout();
         return;
       }
-      if (!flags.confirm) {
+      if (!gating) {
         const before = timer.phase;
         timer.tick(now);
         if (timer.phase === before) {
@@ -412,6 +547,7 @@ function startDriver(program: Command, config: PomodoroConfig, flags: DriverFlag
           return;
         }
         process.stdout.write(`\x07\n${buildPhaseLine(timer, config, names, now)}\n`);
+        notifyEntered(before, timer.phase);
         if (!flags.loop && before === 'longBreak' && timer.phase === 'focus') {
           process.stdout.write(`${buildSummaryLine(timer.focusCount, names)}\n`);
           finish();
@@ -461,9 +597,11 @@ function startDriver(program: Command, config: PomodoroConfig, flags: DriverFlag
 
   if (flags.live) {
     render(buildPhaseLine(timer, config, names, Date.now()));
+    notifyEntered(undefined, timer.phase);
     interval = setInterval(onLiveTick, 250);
   } else {
     process.stdout.write(`${buildPhaseLine(timer, config, names, Date.now())}\n`);
+    notifyEntered(undefined, timer.phase);
     armQuietTimeout();
   }
 

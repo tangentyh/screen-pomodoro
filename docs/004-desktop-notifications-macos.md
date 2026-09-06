@@ -1,6 +1,6 @@
 # 004 — Desktop Notifications (macOS via `terminal-notifier`)
 
-Status: proposed. Extends `003-confirm-and-names.md`. macOS only; Linux/Windows
+Status: accepted. Extends `003-confirm-and-names.md`. macOS only; Linux/Windows
 explicitly out of scope.
 
 ## Goals

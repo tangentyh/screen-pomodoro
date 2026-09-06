@@ -35,6 +35,8 @@ Options:
   --no-loop            Stop after the first long break instead of looping forever.
   -q, --quiet          Log transitions only, no live countdown.
   --confirm            Awaits y/n on each phase transition (requires interactive stdin).
+  --notify             Send a macOS notification on each phase transition (macOS + terminal-notifier required).
+  --notify-confirm     Answer phase transitions by clicking the notification (click = yes, No = no). Implies the confirm gate; does not require interactive stdin.
   --focus-name <name>  Custom label for focus phases. (default: "Focus")
   --short-name <name>  Custom label for short breaks. (default: "Short break")
   --long-name <name>   Custom label for long breaks. (default: "Long break")
@@ -56,6 +58,30 @@ Deep work complete. Start Coffee? [y/n] y
 Anything else re-prompts. `--confirm` needs an interactive terminal
 (`--confirm requires an interactive terminal` otherwise). `--no-loop` still
 exits after the long break without a trailing prompt.
+
+## macOS notifications (`terminal-notifier`)
+
+macOS only — Linux/Windows use of either flag is a usage error (exit 1).
+Install the notifier once:
+
+```sh
+brew install terminal-notifier
+```
+
+- `--notify` sends one fire-and-forget toast per transition (startup included)
+  alongside the usual bell + phase line, in both live and quiet modes.
+  A missed toast never kills the timer (one stderr note, then bell+text).
+- `--notify-confirm` replaces the stdin gate: each deadline shows a toast
+  (`<current> complete` / `<spent> spent. Start <next> — <upcoming>?
+Click = yes, No = restart`). Click the body for yes, the `No` button for
+  no. Dismissing the toast re-sends it until answered (same group, no
+  stacking) — the toast equivalent of invalid stdin input.
+- `--notify-confirm` cannot be combined with `--confirm` or `--notify`
+  (one source only), and unlike `--confirm` it works without a TTY.
+- Caveats: Focus/DnD holds the toast (timers stay frozen, as with stdin);
+  over SSH / launchd-as-root delivery fails (exit 4) → `--notify` logs and
+  continues, `--notify-confirm` resolves the pending prompt `false` with a
+  stderr note instead of hanging.
 
 ## Development
 

@@ -179,15 +179,18 @@ export async function checkNotifierAvailable(exec: ExecFileFn = defaultExec): Pr
   }
 }
 
-/** Fire-and-forget delivery: resolves void, never rejects (caller logs). */
+/** Fire-and-forget delivery: resolves void, never rejects (logs one stderr line). */
 export async function sendNotification(
   exec: ExecFileFn = defaultExec,
   opts: NotifyPayload,
 ): Promise<void> {
   try {
     await exec(NOTIFIER_BIN, baseArgv(opts.title, opts.message));
-  } catch {
+  } catch (err) {
     // Non-fatal by design (004 D4): a missed toast must not kill a focus.
+    process.stderr.write(
+      `terminal-notifier notification failed: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
   }
 }
 
