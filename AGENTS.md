@@ -6,7 +6,10 @@
 
 ## Layout
 
-- `src/cli.ts` — entry, option parsing, driver. All I/O lives here.
+- `src/cli.ts` — thin entry (`run`/`main`), display + back-compat re-exports. All `../src/cli.js` test imports keep working.
+- `src/program.ts` — commander option parsing/validation, wires to driver.
+- `src/driver.ts` — pomodoro driver (live/quiet loops, confirm flow, screen-pause, wake-jump guard, SIGINT). All I/O lives here.
+- `src/confirm-stdin.ts` — stdin `y/n` confirmer (`ConfirmFn` seam).
 - `src/timer.ts` — pure state machine, no `node:` imports.
 - `src/display.ts` — all user-visible text. Reuse it, never hardcode phase names.
 - `src/screen.ts` — `ScreenMonitor` seam (currently a no-op; real watchers inject here).
