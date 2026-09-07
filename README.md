@@ -103,11 +103,15 @@ brew install terminal-notifier
 - `--notify` sends one fire-and-forget toast per transition (startup included)
   alongside the usual bell + phase line, in both live and quiet modes.
   A missed toast never kills the timer (one stderr note, then bell+text).
+  Nothing fires while the screen is locked (skipped, not queued — the next
+  entry replaces in place), and locking withdraws the visible toast.
 - `--notify-confirm` replaces the stdin gate: each deadline shows a toast
   (`<current> complete` / `<spent> spent. Start <next> — <upcoming>?
 Click = yes, No = restart`). Click the body for yes, the `No` button for
   no. Dismissing the toast re-sends it until answered (same group, no
-  stacking) — the toast equivalent of invalid stdin input.
+  stacking) — the toast equivalent of invalid stdin input. A prompt owed
+  across a screen lock is likewise re-sent on unlock, so the click still
+  counts exactly once.
 - `--notify-confirm` cannot be combined with `--confirm` or `--notify`
   (one source only), and unlike `--confirm` it works without a TTY.
 - Caveats: Focus/DnD holds the toast (timers stay frozen, as with stdin);
@@ -143,7 +147,10 @@ opts out (no polling at all, quiet mode stays fully idle).
   lock-semantics answer there, and idle-time pause is out of scope.
 - Fast-user-switch scoping is unverified and deferred.
 - Rapid lock↔unlock within one interval coalesces silently; lock while
-  `--confirm` is pending is a no-op and the answer still wins.
+  `--confirm` is pending is a no-op and the answer still wins (a pending
+  `--notify-confirm` toast is re-sent on unlock so it stays answerable).
+  Starting while locked freezes immediately instead of running until the
+  first poll.
 - Lid-close sleep freezes the process; on wake a >5s wall-clock jump probes
   before ticking so a lock-freeze lands before any phase cascade (unlocked-
   on-wake cascade on no-password machines is a known V1 limitation).
