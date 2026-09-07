@@ -119,6 +119,10 @@ opts out (no polling at all, quiet mode stays fully idle).
   `CGSSessionScreenIsLocked = Yes` when present); anything else means active.
   Pause lands within ~2s of locking, resume on unlock — in live and quiet
   modes, reusing the pause/resume copy with no new strings and no bell.
+  Both modes leave a `Paused`/`Resumed` pair in scrollback; live suspends
+  its countdown ticks while paused and commits each history row over the
+  countdown row, so scrollback holds one row per event. `-q` logs the pair
+  only (no countdown).
 - Fail open: probe errors, parse misses, or a missing binary mean "assume
   active, timer runs" (one stderr note until the next success, never spam).
   A missed lock overcounts seconds; a false lock would freeze a focus — the

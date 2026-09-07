@@ -272,7 +272,7 @@ describe('005 step 2 — lock mid-focus pauses, unlock resumes (existing copy)',
     }
   });
 
-  it('live: lock renders the paused suffix with no bell, unlock re-renders the line', async () => {
+  it('live: lock leaves history with no bell and no suffix, unlock re-renders the line', async () => {
     vi.useFakeTimers();
     setStdoutIsTTY(true);
     const stub = new StubMonitor('active');
@@ -284,22 +284,196 @@ describe('005 step 2 — lock mid-focus pauses, unlock resumes (existing copy)',
       await advance(500);
       stub.fire('locked');
       await advance(0);
-      expect(stdoutText(out)).toContain('(paused — screen locked)');
+      // 006 tidy: history replaces the suffix (no ephemeral duplicate).
+      expect(stdoutText(out)).not.toContain('(paused — screen locked)');
+      expect(stdoutText(out)).toMatch(/Paused Focus — screen locked, timer frozen/);
       expect(countBells(stdoutText(out))).toBe(0);
       stub.fire('active');
       await advance(500);
       // Still in the same focus after a lock/unlock round-trip.
       expect(stdoutText(out)).toContain('Focus 1/4');
+      expect(stdoutText(out)).toMatch(/Resumed Focus — \d+:\d\d remaining/);
+      expect(countBells(stdoutText(out))).toBe(0);
     } finally {
       await settle(runPromise);
     }
   });
 
-  it('live: every in-place redraw clears to end of line (no ghost suffix after resume)', async () => {
-    // QA 2026-09-07: unlock re-rendered the shorter running line over the
-    // longer paused line with a bare `\r`, leaving a stale
-    // "(paused — screen locked)" tail on a running timer. All live renders
-    // must carry EL so shrunken rows (resume, 10:00→9:59) cannot ghost.
+  it('live: ticks suspend while paused (idle, no redraw churn)', async () => {
+    vi.useFakeTimers();
+    setStdoutIsTTY(true);
+    const stub = new StubMonitor('active');
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const runPromise = run(['--focus', '60s', '--short', '60s', '--long', '60s'], {
+      monitor: stub,
+    });
+    try {
+      await advance(500);
+      stub.fire('locked');
+      await advance(0);
+      const callsAfterLock = out.mock.calls.length;
+      await advance(2000);
+      // Only the 2000ms screen poll may fire; no 250ms countdown redraws.
+      expect(out.mock.calls.length).toBe(callsAfterLock);
+      stub.fire('active');
+      await advance(500);
+      expect(out.mock.calls.length).toBeGreaterThan(callsAfterLock);
+    } finally {
+      await settle(runPromise);
+    }
+  });
+
+  it('live: no blank line between Paused and Resumed (pause leaves the cursor clean)', async () => {
+    vi.useFakeTimers();
+    setStdoutIsTTY(true);
+    const stub = new StubMonitor('active');
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const runPromise = run(['--focus', '60s', '--short', '60s', '--long', '60s'], {
+      monitor: stub,
+    });
+    try {
+      await advance(500);
+      stub.fire('locked');
+      await advance(0);
+      stub.fire('active');
+      await advance(0);
+      const text = stdoutText(out);
+      expect(text).toContain('Paused Focus — screen locked, timer frozen');
+      expect(text).not.toMatch(/timer frozen\n\nResumed/);
+    } finally {
+      await settle(runPromise);
+    }
+  });
+
+  it('live: startup leaves a full-duration history line (parity with later phases)', async () => {
+    vi.useFakeTimers();
+    setStdoutIsTTY(true);
+    const stub = new StubMonitor('active');
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const runPromise = run(['--focus', '60s', '--short', '60s', '--long', '60s'], {
+      monitor: stub,
+    });
+    try {
+      await advance(0);
+      // First phase must log its birth (full 1:00), like every phase-change
+      // entry does — otherwise scrollback shows only its 0:01 death fossil.
+      // Commit framing: erase the live row first so no fossil scrolls.
+      const first = String(out.mock.calls[0]?.[0]);
+      expect(first).toBe('\r\x1b[KFocus 1/4 — 1:00 remaining\n');
+    } finally {
+      await settle(runPromise);
+    }
+  });
+
+  it('live: every history row commits over the live row (one row per event)', async () => {
+    // Ghostty paste showed a stale-tick fossil per event: each leading-`\n`
+    // history write scrolled the live `\r` frame into scrollback. Commits
+    // (`\r` + EL first) erase the frame before scrolling, so each event
+    // leaves exactly one row. Pin per-chunk framing across startup, lock,
+    // unlock, a phase change, and SIGINT summary.
+    vi.useFakeTimers();
+    setStdoutIsTTY(true);
+    const stub = new StubMonitor('active');
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const runPromise = run(['--focus', '2s', '--short', '60s', '--long', '60s'], {
+      monitor: stub,
+    });
+    try {
+      await advance(500);
+      stub.fire('locked');
+      await advance(0);
+      stub.fire('active');
+      await advance(3000);
+      process.emit('SIGINT');
+      await runPromise;
+      const chunks = out.mock.calls.map((call) => String(call[0]));
+      expect(chunks.length).toBeGreaterThan(0);
+      // String ops (not regex literals) — eslint no-control-regex.
+      const isRender = (chunk: string): boolean =>
+        chunk.startsWith('\r') && !chunk.includes('\n') && chunk.endsWith('\x1b[K');
+      const isCommit = (chunk: string): boolean => {
+        const rest = chunk.startsWith('\x07') ? chunk.slice(1) : chunk;
+        return rest.startsWith('\r\x1b[K') && rest.endsWith('\n') && !rest.slice(1).includes('\r');
+      };
+      for (const chunk of chunks) {
+        expect(isRender(chunk) || isCommit(chunk), `chunk: ${JSON.stringify(chunk)}`).toBe(true);
+      }
+      // Spot-check the commits themselves.
+      expect(chunks.some((c) => c.startsWith('\r\x1b[KFocus 1/4 —'))).toBe(true);
+      expect(chunks.some((c) => c.startsWith('\r\x1b[KPaused Focus'))).toBe(true);
+      expect(chunks.some((c) => c.startsWith('\r\x1b[KResumed Focus'))).toBe(true);
+      expect(chunks.some((c) => c.startsWith('\x07\r\x1b[KShort break'))).toBe(true);
+    } finally {
+      await settle(runPromise);
+    }
+  });
+
+  it('quiet: no blank lines across a full run (dense ledger)', async () => {
+    // Quiet never owns a `\r` row, so history writes must not carry live's
+    // leading break — `\n…\n` after a `…\n` line prints a blank row.
+    vi.useFakeTimers();
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const runPromise = run(
+      ['--focus', '2s', '--short', '2s', '--long', '2s', '--cycles', '1', '--no-loop', '--quiet'],
+      { monitor: new StubMonitor('active') },
+    );
+    try {
+      // Drive the quiet timeout chain through focus + short + long (2s each).
+      await advance(2500);
+      await advance(2500);
+      await advance(2500);
+      await expect(runPromise).resolves.toBe(0);
+      const text = stdoutText(out).replaceAll('\x07', '');
+      expect(text).toContain('Completed 1 focuses');
+      expect(text).not.toContain('\n\n');
+    } finally {
+      await settle(runPromise);
+    }
+  });
+
+  it('quiet: SIGINT summary follows history with no blank line', async () => {
+    vi.useFakeTimers();
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const runPromise = run(['--focus', '60s', '--short', '60s', '--long', '60s', '--quiet'], {
+      monitor: new StubMonitor('active'),
+    });
+    try {
+      await advance(0);
+      process.emit('SIGINT');
+      await expect(runPromise).resolves.toBe(0);
+      expect(stdoutText(out)).not.toContain('\n\n');
+    } finally {
+      await settle(runPromise);
+    }
+  });
+
+  it('live: repeated locked fires history once (dedup holds)', async () => {
+    vi.useFakeTimers();
+    setStdoutIsTTY(true);
+    const stub = new StubMonitor('active');
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const runPromise = run(['--focus', '60s', '--short', '60s', '--long', '60s'], {
+      monitor: stub,
+    });
+    try {
+      await advance(500);
+      stub.fire('locked');
+      await advance(0);
+      stub.fire('locked');
+      await advance(0);
+      const text = stdoutText(out);
+      expect(text.match(/Paused Focus — screen locked, timer frozen/g)?.length ?? 0).toBe(1);
+    } finally {
+      await settle(runPromise);
+    }
+  });
+
+  it('live: every in-place redraw clears to end of line (no ghost tail after resume)', async () => {
+    // QA 2026-09-07: a shorter re-render over a longer row left a stale tail
+    // with a bare `\r`. Pure renders (ticks, resume re-render — chunks with
+    // no `\n`) must carry EL so shrunken rows (10:00→9:59) cannot ghost.
+    // History commits (`\r` + EL + text + `\n`) are pinned by the framing
+    // test above, not here.
     vi.useFakeTimers();
     setStdoutIsTTY(true);
     const stub = new StubMonitor('active');
@@ -315,8 +489,12 @@ describe('005 step 2 — lock mid-focus pauses, unlock resumes (existing copy)',
       await advance(500);
       const redraws = out.mock.calls
         .map((call) => call[0])
-        .filter((chunk): chunk is string => typeof chunk === 'string' && chunk.startsWith('\r'));
-      // Countdown ticks + paused + resume all redraw in place.
+        .filter(
+          (chunk): chunk is string =>
+            typeof chunk === 'string' && chunk.startsWith('\r') && !chunk.includes('\n'),
+        );
+      // Countdown ticks + resume render redraw in place (pause/resume
+      // history are commits, pinned by the framing test above).
       expect(redraws.length).toBeGreaterThan(2);
       for (const redraw of redraws) {
         expect(redraw.endsWith('\x1b[K')).toBe(true);
@@ -397,7 +575,8 @@ describe('005 step 2 — wake-jump guard (D6: JUMP_THRESHOLD_MS = 5000)', () => 
       const text = stdoutText(out);
       expect(text).not.toContain('Short break');
       expect(countBells(text)).toBe(0);
-      expect(text).toContain('(paused — screen locked)');
+      expect(text).toMatch(/Paused Focus — screen locked, timer frozen/);
+      expect(text).not.toContain('(paused — screen locked)');
     } finally {
       await settle(runPromise);
     }

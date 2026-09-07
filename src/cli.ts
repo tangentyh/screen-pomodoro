@@ -6,9 +6,10 @@ import { fileURLToPath } from 'node:url';
 import pkg from '../package.json' with { type: 'json' };
 import { Command, CommanderError } from 'commander';
 import {
+  buildPausedLine,
   buildPhaseLine,
+  buildResumedLine,
   buildSummaryLine,
-  formatClock,
   parsePhaseName,
   phaseLabel,
   type PhaseNames,
@@ -32,7 +33,9 @@ import { createScreenMonitor, type ScreenMonitor, type ScreenState } from './scr
 // '../src/cli.js'` keeps working (and future monitors can import from either
 // `cli.js` or `display.js`).
 export {
+  buildPausedLine,
   buildPhaseLine,
+  buildResumedLine,
   buildSummaryLine,
   DEFAULT_PHASE_NAMES,
   formatClock,
@@ -75,13 +78,28 @@ function parseCyclesOption(raw: string): number {
 /**
  * Render the live one-line countdown via carriage return. Isolated so tests
  * can spy on `process.stdout.write`. The trailing EL (`\x1b[K`) clears to
- * end of line: rows are redrawn in place and shrink (resume drops the
- * 24-char paused suffix; `formatClock` narrows at 10:00→9:59), so without it
- * the tail of the previous longer row stays visible — e.g. a ghost
- * "(paused — screen locked)" on a running timer after unlock (QA 2026-09-07).
+ * end of line: rows are redrawn in place and shrink (`formatClock` narrows
+ * at 10:00→9:59), so without it the tail of the previous longer row stays
+ * visible (QA 2026-09-07).
+ *
+ * NOTE the EL order differs from `commitLiveLine` on purpose: render
+ * overwrites the row head with new text and clears the leftover tail,
+ * while commit clears the whole stale row *before* writing history.
  */
 function render(liveLine: string): void {
   process.stdout.write(`\r${liveLine}\x1b[K`);
+}
+
+/**
+ * Commit a history row over the live countdown row (tidy 006). Every live
+ * `\n` history write used to scroll the in-progress `\r` frame into
+ * scrollback as a stale-tick fossil (one duplicate row per event in a
+ * Ghostty paste). `\r` + EL erases the frame first, so each event leaves
+ * exactly one row. Live-only — quiet never owns a `\r` row, so its writes
+ * stay plain. Harmless on an already-clean line (pause/resume adjacency).
+ */
+function commitLiveLine(text: string): void {
+  process.stdout.write(`\r\x1b[K${text}\n`);
 }
 
 /** Peek the phase a `y` answer would advance to, without mutating the timer. */
@@ -447,7 +465,17 @@ export function startDriver(
 
   function onSigint(): void {
     if (finished) return;
-    process.stdout.write(`\n${buildSummaryLine(timer.focusCount, names)}\n`);
+    if (flags.live && !confirmPending) {
+      // No live `\r` row while a confirm prompt owns the line — committing
+      // there would erase the user's answer from the transcript.
+      commitLiveLine(buildSummaryLine(timer.focusCount, names));
+    } else if (confirmPending) {
+      // Prompt owns the line; break to a fresh one first.
+      process.stdout.write(`\n${buildSummaryLine(timer.focusCount, names)}\n`);
+    } else {
+      // Quiet: cursor is always clean (no `\r` rows), so no leading break.
+      process.stdout.write(`${buildSummaryLine(timer.focusCount, names)}\n`);
+    }
     finish();
   }
 
@@ -475,7 +503,13 @@ export function startDriver(
       if (!flags.loop && timer.phase === 'longBreak' && timer.remainingMs(Date.now()) <= 0) {
         // Terminal long break: ring (phase-change parity) + summary only.
         // No trailing prompt and no next-focus line — the timer exits.
-        process.stdout.write(`\x07${buildSummaryLine(timer.focusCount, names)}\n`);
+        // Live commits (timers are suspended, but the last `\r` tick row is
+        // still on screen); quiet appends (cursor always clean there).
+        if (flags.live) {
+          process.stdout.write(`\x07\r\x1b[K${buildSummaryLine(timer.focusCount, names)}\n`);
+        } else {
+          process.stdout.write(`\x07${buildSummaryLine(timer.focusCount, names)}\n`);
+        }
         finish();
         return;
       }
@@ -511,7 +545,7 @@ export function startDriver(
         notifyEntered(current, timer.phase);
         const line = buildPhaseLine(timer, config, names, answerAt);
         if (flags.live) {
-          process.stdout.write(`\n${line}\n`);
+          commitLiveLine(line);
         } else {
           process.stdout.write(`${line}\n`);
         }
@@ -526,7 +560,7 @@ export function startDriver(
       const restarted = Date.now();
       const line = buildPhaseLine(timer, config, names, restarted);
       if (flags.live) {
-        process.stdout.write(`\n${line}\n`);
+        commitLiveLine(line);
       } else {
         process.stdout.write(`${line}\n`);
       }
@@ -548,25 +582,31 @@ export function startDriver(
       if (timer.paused) return;
       timer.pause('screen', now);
       if (flags.live) {
-        render(`${buildPhaseLine(timer, config, names, now)} (paused — screen locked)`);
+        // Tidy 006: history replaces the suffix; suspend ticks while paused
+        // (idle like quiet — only the 2000ms poll stays armed).
+        commitLiveLine(buildPausedLine(timer, names));
+        if (interval !== undefined) {
+          clearInterval(interval);
+          interval = undefined;
+        }
       } else {
         if (timeout !== undefined) {
           clearTimeout(timeout);
           timeout = undefined;
         }
-        process.stdout.write(
-          `Paused ${phaseLabel(timer.phase, names)} — screen locked, timer frozen\n`,
-        );
+        process.stdout.write(`${buildPausedLine(timer, names)}\n`);
       }
     } else {
       if (!timer.paused) return;
       timer.resume('screen', now);
       if (flags.live) {
+        // Commit framing is a harmless no-op here (pause left the cursor
+        // clean) and keeps every live history write uniform.
+        commitLiveLine(buildResumedLine(timer, names, now));
         render(buildPhaseLine(timer, config, names, now));
+        resumeTimers();
       } else {
-        process.stdout.write(
-          `Resumed ${phaseLabel(timer.phase, names)} — ${formatClock(timer.remainingMs(now))} remaining\n`,
-        );
+        process.stdout.write(`${buildResumedLine(timer, names, now)}\n`);
         armQuietTimeout();
       }
     }
@@ -605,10 +645,9 @@ export function startDriver(
     if (finished || confirmPending) return;
     if (await checkWakeJump(true, 0)) return;
     const now = Date.now();
-    if (timer.paused) {
-      render(`${buildPhaseLine(timer, config, names, now)} (paused — screen locked)`);
-      return;
-    }
+    // Tidy 006: no suffix redraws while paused (interval is suspended on
+    // lock; this guard covers races where a tick was already queued).
+    if (timer.paused) return;
     if (timer.remainingMs(now) > 0) {
       render(buildPhaseLine(timer, config, names, now));
       return;
@@ -619,11 +658,11 @@ export function startDriver(
       if (!flags.loop && before === 'longBreak' && timer.phase === 'focus') {
         // Terminal long break: ring + summary only. Do not start (or notify)
         // the next focus — the timer exits instead of looping.
-        process.stdout.write(`\x07\n${buildSummaryLine(timer.focusCount, names)}\n`);
+        process.stdout.write(`\x07\r\x1b[K${buildSummaryLine(timer.focusCount, names)}\n`);
         finish();
         return;
       }
-      process.stdout.write(`\x07\n${buildPhaseLine(timer, config, names, now)}\n`);
+      process.stdout.write(`\x07\r\x1b[K${buildPhaseLine(timer, config, names, now)}\n`);
       notifyEntered(before, timer.phase);
       return;
     }
@@ -663,11 +702,12 @@ export function startDriver(
       }
       if (!flags.loop && before === 'longBreak' && timer.phase === 'focus') {
         // Terminal long break: ring + summary only (no next-focus line).
-        process.stdout.write(`\x07\n${buildSummaryLine(timer.focusCount, names)}\n`);
+        // Quiet never owns a `\r` row, so no leading break (live commits).
+        process.stdout.write(`\x07${buildSummaryLine(timer.focusCount, names)}\n`);
         finish();
         return;
       }
-      process.stdout.write(`\x07\n${buildPhaseLine(timer, config, names, now)}\n`);
+      process.stdout.write(`\x07${buildPhaseLine(timer, config, names, now)}\n`);
       notifyEntered(before, timer.phase);
       armQuietTimeout();
       return;
@@ -681,6 +721,10 @@ export function startDriver(
   process.on('SIGINT', onSigint);
 
   if (flags.live) {
+    // History birth line for parity: later phases each log a full-duration
+    // line on entry, so the first phase must too — otherwise scrollback
+    // shows only its 0:01 death fossil. No bell (startup is not a transition).
+    commitLiveLine(buildPhaseLine(timer, config, names, Date.now()));
     render(buildPhaseLine(timer, config, names, Date.now()));
     notifyEntered(undefined, timer.phase);
     interval = setInterval(() => {

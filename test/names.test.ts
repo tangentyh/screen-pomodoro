@@ -311,7 +311,7 @@ describe('003 — phase names', () => {
     await expect(runPromise).resolves.toBe(0);
   });
 
-  it('live paused line keeps the name via the phase line', async () => {
+  it('live pause history keeps the custom name', async () => {
     vi.useFakeTimers();
     setStdoutIsTTY(true);
     const screen = captureScreenListener();
@@ -329,7 +329,11 @@ describe('003 — phase names', () => {
     await advance(500);
     screen.get()?.('locked');
     await advance(300);
-    expect(stdoutText(out)).toMatch(/Deep work.*\(paused — screen locked\)/);
+    expect(stdoutText(out)).toMatch(/Paused Deep work — screen locked, timer frozen/);
+    expect(stdoutText(out)).not.toContain('(paused — screen locked)');
+    screen.get()?.('active');
+    await advance(300);
+    expect(stdoutText(out)).toMatch(/Resumed Deep work — .* remaining/);
     process.emit('SIGINT');
     await expect(runPromise).resolves.toBe(0);
   });

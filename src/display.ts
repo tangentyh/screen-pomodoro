@@ -77,6 +77,28 @@ export function buildPhaseLine(
 }
 
 /**
+ * Build the persistent pause history line (006). Shared by live and quiet
+ * so both modes log identical copy; the live in-place suffix stays separate.
+ */
+export function buildPausedLine(
+  timer: PomodoroTimer,
+  names: PhaseNames = DEFAULT_PHASE_NAMES,
+): string {
+  return `Paused ${phaseLabel(timer.phase, names)} — screen locked, timer frozen`;
+}
+
+/**
+ * Build the persistent resume history line (006). Shared by live and quiet.
+ */
+export function buildResumedLine(
+  timer: PomodoroTimer,
+  names: PhaseNames = DEFAULT_PHASE_NAMES,
+  nowMs: number = Date.now(),
+): string {
+  return `Resumed ${phaseLabel(timer.phase, names)} — ${formatClock(timer.remainingMs(nowMs))} remaining`;
+}
+
+/**
  * Build the `Completed N …` summary. Default focus name preserves today's
  * `focuses` wording; a custom `--focus-name` is used verbatim (no inflection).
  */
