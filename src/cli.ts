@@ -12,6 +12,7 @@ import {
   buildSummaryLine,
   parsePhaseName,
   phaseLabel,
+  withTimestamp,
   type PhaseNames,
 } from './display.js';
 import {
@@ -39,8 +40,10 @@ export {
   buildSummaryLine,
   DEFAULT_PHASE_NAMES,
   formatClock,
+  formatTimestamp,
   parsePhaseName,
   phaseLabel,
+  withTimestamp,
   type PhaseNames,
 } from './display.js';
 
@@ -58,6 +61,7 @@ interface PomodoroOptions {
   cycles: string;
   loop: boolean;
   quiet: boolean;
+  timestamp: boolean;
   confirm: boolean;
   notify: boolean;
   notifyConfirm: boolean;
@@ -214,6 +218,7 @@ function createProgram(monitorOverride?: ScreenMonitor): Command {
       'Stop after the first long break (i.e. after --cycles focuses) instead of looping forever.',
     )
     .option('-q, --quiet', 'Log transitions only, no live countdown.')
+    .option('--timestamp', 'Prefix history lines with the current time ([HH:MM:SS]).')
     .option('--confirm', 'Awaits y/n on each phase transition (requires interactive stdin).')
     .option(
       '--notify',
@@ -296,6 +301,7 @@ function createProgram(monitorOverride?: ScreenMonitor): Command {
         loop: raw.loop,
         live: !quiet,
         names,
+        timestamp: raw.timestamp ?? false,
         confirm: raw.confirm,
         notify,
         notifyConfirm,
@@ -312,6 +318,7 @@ interface DriverFlags {
   loop: boolean;
   live: boolean;
   names: PhaseNames;
+  timestamp: boolean;
   confirm: boolean;
   notify: boolean;
   notifyConfirm: boolean;
@@ -331,6 +338,15 @@ export function startDriver(
   const useNotify = flags.notify;
   const useNotifyConfirm = flags.notifyConfirm;
   const gating = flags.confirm || useNotifyConfirm;
+
+  /**
+   * Prefix a history line with `[HH:MM:SS]` when `--timestamp` is set.
+   * History only: the ephemeral live `\r` countdown is never stamped —
+   * wall-clock seconds and remaining seconds flip on different boundaries,
+   * so stamping it shows two clocks ticking out of phase.
+   */
+  const stamp = (line: string, nowMs: number): string =>
+    flags.timestamp ? withTimestamp(line, nowMs) : line;
 
   const monitor: ScreenMonitor =
     monitorOverride ?? createScreenMonitor({ enabled: flags.screenPause ?? true });
@@ -465,16 +481,17 @@ export function startDriver(
 
   function onSigint(): void {
     if (finished) return;
+    const now = Date.now();
     if (flags.live && !confirmPending) {
       // No live `\r` row while a confirm prompt owns the line — committing
       // there would erase the user's answer from the transcript.
-      commitLiveLine(buildSummaryLine(timer.focusCount, names));
+      commitLiveLine(stamp(buildSummaryLine(timer.focusCount, names), now));
     } else if (confirmPending) {
       // Prompt owns the line; break to a fresh one first.
-      process.stdout.write(`\n${buildSummaryLine(timer.focusCount, names)}\n`);
+      process.stdout.write(`\n${stamp(buildSummaryLine(timer.focusCount, names), now)}\n`);
     } else {
       // Quiet: cursor is always clean (no `\r` rows), so no leading break.
-      process.stdout.write(`${buildSummaryLine(timer.focusCount, names)}\n`);
+      process.stdout.write(`${stamp(buildSummaryLine(timer.focusCount, names), now)}\n`);
     }
     finish();
   }
@@ -505,10 +522,15 @@ export function startDriver(
         // No trailing prompt and no next-focus line — the timer exits.
         // Live commits (timers are suspended, but the last `\r` tick row is
         // still on screen); quiet appends (cursor always clean there).
+        const terminalAt = Date.now();
         if (flags.live) {
-          process.stdout.write(`\x07\r\x1b[K${buildSummaryLine(timer.focusCount, names)}\n`);
+          process.stdout.write(
+            `\x07\r\x1b[K${stamp(buildSummaryLine(timer.focusCount, names), terminalAt)}\n`,
+          );
         } else {
-          process.stdout.write(`\x07${buildSummaryLine(timer.focusCount, names)}\n`);
+          process.stdout.write(
+            `\x07${stamp(buildSummaryLine(timer.focusCount, names), terminalAt)}\n`,
+          );
         }
         finish();
         return;
@@ -530,7 +552,7 @@ export function startDriver(
       } else {
         const promptMsg = `${phaseLabel(current, names)} complete. Start ${phaseLabel(next, names)}? [y/n] `;
         process.stdout.write('\x07');
-        confirmed = await confirmFn(promptMsg);
+        confirmed = await confirmFn(stamp(promptMsg, promptAt));
       }
       if (finished) return;
       const answerAt = Date.now();
@@ -543,7 +565,7 @@ export function startDriver(
         timer.tick(promptAt);
         timer.shiftEndsAtMs(gatingMs);
         notifyEntered(current, timer.phase);
-        const line = buildPhaseLine(timer, config, names, answerAt);
+        const line = stamp(buildPhaseLine(timer, config, names, answerAt), answerAt);
         if (flags.live) {
           commitLiveLine(line);
         } else {
@@ -558,11 +580,11 @@ export function startDriver(
       }
       timer.restartCurrentPhase(answerAt);
       const restarted = Date.now();
-      const line = buildPhaseLine(timer, config, names, restarted);
+      const restartedLine = stamp(buildPhaseLine(timer, config, names, restarted), restarted);
       if (flags.live) {
-        commitLiveLine(line);
+        commitLiveLine(restartedLine);
       } else {
-        process.stdout.write(`${line}\n`);
+        process.stdout.write(`${restartedLine}\n`);
       }
       confirmPending = false;
       resumeTimers();
@@ -584,7 +606,7 @@ export function startDriver(
       if (flags.live) {
         // Tidy 006: history replaces the suffix; suspend ticks while paused
         // (idle like quiet — only the 2000ms poll stays armed).
-        commitLiveLine(buildPausedLine(timer, names));
+        commitLiveLine(stamp(buildPausedLine(timer, names), now));
         if (interval !== undefined) {
           clearInterval(interval);
           interval = undefined;
@@ -594,7 +616,7 @@ export function startDriver(
           clearTimeout(timeout);
           timeout = undefined;
         }
-        process.stdout.write(`${buildPausedLine(timer, names)}\n`);
+        process.stdout.write(`${stamp(buildPausedLine(timer, names), now)}\n`);
       }
     } else {
       if (!timer.paused) return;
@@ -602,11 +624,11 @@ export function startDriver(
       if (flags.live) {
         // Commit framing is a harmless no-op here (pause left the cursor
         // clean) and keeps every live history write uniform.
-        commitLiveLine(buildResumedLine(timer, names, now));
+        commitLiveLine(stamp(buildResumedLine(timer, names, now), now));
         render(buildPhaseLine(timer, config, names, now));
         resumeTimers();
       } else {
-        process.stdout.write(`${buildResumedLine(timer, names, now)}\n`);
+        process.stdout.write(`${stamp(buildResumedLine(timer, names, now), now)}\n`);
         armQuietTimeout();
       }
     }
@@ -658,11 +680,15 @@ export function startDriver(
       if (!flags.loop && before === 'longBreak' && timer.phase === 'focus') {
         // Terminal long break: ring + summary only. Do not start (or notify)
         // the next focus — the timer exits instead of looping.
-        process.stdout.write(`\x07\r\x1b[K${buildSummaryLine(timer.focusCount, names)}\n`);
+        process.stdout.write(
+          `\x07\r\x1b[K${stamp(buildSummaryLine(timer.focusCount, names), now)}\n`,
+        );
         finish();
         return;
       }
-      process.stdout.write(`\x07\r\x1b[K${buildPhaseLine(timer, config, names, now)}\n`);
+      process.stdout.write(
+        `\x07\r\x1b[K${stamp(buildPhaseLine(timer, config, names, now), now)}\n`,
+      );
       notifyEntered(before, timer.phase);
       return;
     }
@@ -703,11 +729,11 @@ export function startDriver(
       if (!flags.loop && before === 'longBreak' && timer.phase === 'focus') {
         // Terminal long break: ring + summary only (no next-focus line).
         // Quiet never owns a `\r` row, so no leading break (live commits).
-        process.stdout.write(`\x07${buildSummaryLine(timer.focusCount, names)}\n`);
+        process.stdout.write(`\x07${stamp(buildSummaryLine(timer.focusCount, names), now)}\n`);
         finish();
         return;
       }
-      process.stdout.write(`\x07${buildPhaseLine(timer, config, names, now)}\n`);
+      process.stdout.write(`\x07${stamp(buildPhaseLine(timer, config, names, now), now)}\n`);
       notifyEntered(before, timer.phase);
       armQuietTimeout();
       return;
@@ -724,14 +750,16 @@ export function startDriver(
     // History birth line for parity: later phases each log a full-duration
     // line on entry, so the first phase must too — otherwise scrollback
     // shows only its 0:01 death fossil. No bell (startup is not a transition).
-    commitLiveLine(buildPhaseLine(timer, config, names, Date.now()));
-    render(buildPhaseLine(timer, config, names, Date.now()));
+    const startedAt = Date.now();
+    commitLiveLine(stamp(buildPhaseLine(timer, config, names, startedAt), startedAt));
+    render(buildPhaseLine(timer, config, names, startedAt));
     notifyEntered(undefined, timer.phase);
     interval = setInterval(() => {
       void onLiveTick();
     }, 250);
   } else {
-    process.stdout.write(`${buildPhaseLine(timer, config, names, Date.now())}\n`);
+    const startedAt = Date.now();
+    process.stdout.write(`${stamp(buildPhaseLine(timer, config, names, startedAt), startedAt)}\n`);
     notifyEntered(undefined, timer.phase);
     armQuietTimeout();
   }

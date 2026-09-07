@@ -56,6 +56,28 @@ export function formatClock(remainingMs: number): string {
 }
 
 /**
+ * Format a wall-clock timestamp prefix (`[HH:MM:SS]`, local time) for
+ * `--timestamp` log lines. Takes `nowMs` (default `Date.now()`) so tests
+ * can pin the clock with fake timers.
+ */
+export function formatTimestamp(nowMs: number = Date.now()): string {
+  const date = new Date(nowMs);
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+  const ss = String(date.getSeconds()).padStart(2, '0');
+  return `[${hh}:${mm}:${ss}]`;
+}
+
+/**
+ * Prefix a log line with the current timestamp (`[HH:MM:SS] line`).
+ * Pure wrapper around {@link formatTimestamp} — the driver applies it to
+ * history lines when `--timestamp` is set.
+ */
+export function withTimestamp(text: string, nowMs: number = Date.now()): string {
+  return `${formatTimestamp(nowMs)} ${text}`;
+}
+
+/**
  * Build the countdown line for the timer's current phase. Counter (`N/M`)
  * appears on focus only. Reused by live, quiet, pause, and confirm flows.
  */

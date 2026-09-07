@@ -56,6 +56,7 @@ Options:
   --cycles <n>         Focuses per long break (integer >= 1). Loops forever unless --no-loop is given. (default: "4")
   --no-loop            Stop after the first long break (i.e. after --cycles focuses) instead of looping forever.
   -q, --quiet          Log transitions only, no live countdown.
+  --timestamp          Prefix history lines with the current time ([HH:MM:SS]).
   --confirm            Awaits y/n on each phase transition (requires interactive stdin).
   --notify             Send a macOS notification on each phase transition (macOS + terminal-notifier required).
   --notify-confirm     Answer phase transitions by clicking the notification (click = yes, No = no). Implies the confirm gate; does not require interactive stdin.
@@ -84,6 +85,13 @@ exits after the long break without a trailing prompt.
 
 `--cycles` sets the long-break cadence; without `--no-loop` the timer loops
 forever (`--cycles 2 --no-loop` runs 2 focuses then exits).
+
+`--timestamp` prefixes every history line (phase lines, pause/resume, summary,
+confirm prompt) with the current local time (`[14:03:22] Focus 1/4 — …`).
+The ephemeral live countdown stays unstamped — wall-clock seconds and
+remaining seconds flip on different boundaries, so stamping it would show
+two clocks ticking out of phase. Notifications are unchanged (the OS
+already timestamps those).
 
 ## macOS notifications (`terminal-notifier`)
 
