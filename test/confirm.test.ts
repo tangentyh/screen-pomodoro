@@ -13,7 +13,7 @@ import * as readline from 'node:readline';
 import type * as readlineTypes from 'node:readline';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { run } from '../src/cli.js';
-import { NoopMonitor } from '../src/screen.js';
+import { NoopMonitor, PollingMonitor } from '../src/screen.js';
 
 // ESM module namespaces are not spy-able, so stub `node:readline` via vi.mock.
 // The driver under test must use `node:readline` `createInterface` / `question()`
@@ -130,12 +130,13 @@ function mockReadlineManual(): MockReadline & {
 /** Capture the screen-monitor listener so tests can fire locked/active. */
 function captureScreenListener(): { get: () => ((s: 'active' | 'locked') => void) | undefined } {
   let captured: ((s: 'active' | 'locked') => void) | undefined;
-  vi.spyOn(NoopMonitor.prototype, 'subscribe').mockImplementation(
-    (listener: (s: 'active' | 'locked') => void) => {
-      captured = listener;
-      return () => undefined;
-    },
-  );
+  const capture = (listener: (s: 'active' | 'locked') => void): (() => void) => {
+    captured = listener;
+    return () => undefined;
+  };
+  // 005: driver uses PollingMonitor on darwin — spy both backends.
+  vi.spyOn(NoopMonitor.prototype, 'subscribe').mockImplementation(capture);
+  vi.spyOn(PollingMonitor.prototype, 'subscribe').mockImplementation(capture);
   return { get: () => captured };
 }
 

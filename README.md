@@ -27,8 +27,9 @@ recharge.
 `screen-pomodoro` follows exactly this rhythm out of the box: it loops
 `Focus → Short break`, inserting a `Long break` after every `--cycles`
 focuses (4 by default), with the classic 25 / 5 / 15 minute defaults.
-The twist: it pauses automatically when your screen locks, so a coffee run
-or a chat never eats into your focus time.
+The twist: it pauses automatically when your screen locks (macOS —
+Linux/Windows keep running; support planned; `--no-screen-pause` opts out),
+so a coffee run or a chat never eats into your focus time.
 
 ## Quick start
 
@@ -58,6 +59,7 @@ Options:
   --confirm            Awaits y/n on each phase transition (requires interactive stdin).
   --notify             Send a macOS notification on each phase transition (macOS + terminal-notifier required).
   --notify-confirm     Answer phase transitions by clicking the notification (click = yes, No = no). Implies the confirm gate; does not require interactive stdin.
+  --no-screen-pause    Do not pause when the screen locks.
   --focus-name <name>  Custom label for focus phases. (default: "Focus")
   --short-name <name>  Custom label for short breaks. (default: "Short break")
   --long-name <name>   Custom label for long breaks. (default: "Long break")
@@ -106,6 +108,35 @@ Click = yes, No = restart`). Click the body for yes, the `No` button for
   over SSH / launchd-as-root delivery fails (exit 4) → `--notify` logs and
   continues, `--notify-confirm` resolves the pending prompt `false` with a
   stderr note instead of hanging.
+
+## Screen lock (macOS)
+
+macOS only — Linux/Windows keep running; support planned. `--no-screen-pause`
+opts out (no polling at all, quiet mode stays fully idle).
+
+- How it works: polls `/usr/sbin/ioreg -n Root -d1` every 2s (`execFile` only,
+  no new dependencies). Locked = `"IOConsoleLocked" = Yes` (or defensive
+  `CGSSessionScreenIsLocked = Yes` when present); anything else means active.
+  Pause lands within ~2s of locking, resume on unlock — in live and quiet
+  modes, reusing the pause/resume copy with no new strings and no bell.
+- Fail open: probe errors, parse misses, or a missing binary mean "assume
+  active, timer runs" (one stderr note until the next success, never spam).
+  A missed lock overcounts seconds; a false lock would freeze a focus — the
+  costs are asymmetric, so V1 biases toward running.
+- Password grace period (Settings → Lock Screen → "Require password
+  after…"): the console is genuinely unlocked until the grace expires, so the
+  timer correctly keeps running (latency = grace + ≤1 poll).
+- SSH: `ioreg` reads kernel state, so a timer in an SSH session correctly
+  pauses when the desk locks.
+- Password-less screensaver, display sleep without a password, and
+  idle-while-thinking do not pause — "keep running" is the right
+  lock-semantics answer there, and idle-time pause is out of scope.
+- Fast-user-switch scoping is unverified and deferred.
+- Rapid lock↔unlock within one interval coalesces silently; lock while
+  `--confirm` is pending is a no-op and the answer still wins.
+- Lid-close sleep freezes the process; on wake a >5s wall-clock jump probes
+  before ticking so a lock-freeze lands before any phase cascade (unlocked-
+  on-wake cascade on no-password machines is a known V1 limitation).
 
 ## Development
 

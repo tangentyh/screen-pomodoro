@@ -26,7 +26,7 @@ import {
   type ExecFileFn,
 } from './notify.js';
 import { createTimer, parseDuration, type Phase, type PomodoroConfig } from './timer.js';
-import { NoopMonitor, type ScreenMonitor, type ScreenState } from './screen.js';
+import { createScreenMonitor, type ScreenMonitor, type ScreenState } from './screen.js';
 
 // Re-export display helpers from the CLI entry so `import { phaseLabel } from
 // '../src/cli.js'` keeps working (and future monitors can import from either
@@ -41,6 +41,13 @@ export {
   type PhaseNames,
 } from './display.js';
 
+/** Wake-jump guard threshold per 005 D6: drift beyond this probes before ticking. */
+export const JUMP_THRESHOLD_MS = 5000;
+
+export interface RunOptions {
+  monitor?: ScreenMonitor;
+}
+
 interface PomodoroOptions {
   focus: string;
   short: string;
@@ -51,6 +58,7 @@ interface PomodoroOptions {
   confirm: boolean;
   notify: boolean;
   notifyConfirm: boolean;
+  screenPause: boolean;
   focusName: string;
   shortName: string;
   longName: string;
@@ -66,10 +74,14 @@ function parseCyclesOption(raw: string): number {
 
 /**
  * Render the live one-line countdown via carriage return. Isolated so tests
- * can spy on `process.stdout.write`.
+ * can spy on `process.stdout.write`. The trailing EL (`\x1b[K`) clears to
+ * end of line: rows are redrawn in place and shrink (resume drops the
+ * 24-char paused suffix; `formatClock` narrows at 10:00→9:59), so without it
+ * the tail of the previous longer row stays visible — e.g. a ghost
+ * "(paused — screen locked)" on a running timer after unlock (QA 2026-09-07).
  */
 function render(liveLine: string): void {
-  process.stdout.write(`\r${liveLine}`);
+  process.stdout.write(`\r${liveLine}\x1b[K`);
 }
 
 /** Peek the phase a `y` answer would advance to, without mutating the timer. */
@@ -166,7 +178,7 @@ export function createStdinConfirmer(
     });
 }
 
-function createProgram(): Command {
+function createProgram(monitorOverride?: ScreenMonitor): Command {
   const program = new Command()
     .name('screen-pomodoro')
     .description('A pomodoro timer that pauses when your screen locks.')
@@ -193,6 +205,7 @@ function createProgram(): Command {
       '--notify-confirm',
       'Answer phase transitions by clicking the notification (click = yes, No = no). Implies the confirm gate; does not require interactive stdin.',
     )
+    .option('--no-screen-pause', 'Do not pause when the screen locks.')
     .option('--focus-name <name>', 'Custom label for focus phases.', 'Focus')
     .option('--short-name <name>', 'Custom label for short breaks.', 'Short break')
     .option('--long-name <name>', 'Custom label for long breaks.', 'Long break');
@@ -258,14 +271,20 @@ function createProgram(): Command {
     }
 
     const quiet = raw.quiet || !process.stdout.isTTY;
-    await startDriver(program, config, {
-      loop: raw.loop,
-      live: !quiet,
-      names,
-      confirm: raw.confirm,
-      notify,
-      notifyConfirm,
-    });
+    await startDriver(
+      program,
+      config,
+      {
+        loop: raw.loop,
+        live: !quiet,
+        names,
+        confirm: raw.confirm,
+        notify,
+        notifyConfirm,
+        screenPause: raw.screenPause ?? true,
+      },
+      monitorOverride,
+    );
   });
 
   return program;
@@ -278,9 +297,15 @@ interface DriverFlags {
   confirm: boolean;
   notify: boolean;
   notifyConfirm: boolean;
+  screenPause: boolean;
 }
 
-function startDriver(program: Command, config: PomodoroConfig, flags: DriverFlags): Promise<void> {
+export function startDriver(
+  program: Command,
+  config: PomodoroConfig,
+  flags: DriverFlags,
+  monitorOverride?: ScreenMonitor,
+): Promise<void> {
   void program;
   const timer = createTimer(config);
   timer.start(Date.now());
@@ -289,7 +314,8 @@ function startDriver(program: Command, config: PomodoroConfig, flags: DriverFlag
   const useNotifyConfirm = flags.notifyConfirm;
   const gating = flags.confirm || useNotifyConfirm;
 
-  const monitor: ScreenMonitor = new NoopMonitor();
+  const monitor: ScreenMonitor =
+    monitorOverride ?? createScreenMonitor({ enabled: flags.screenPause ?? true });
 
   let interval: ReturnType<typeof setInterval> | undefined;
   let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -297,6 +323,9 @@ function startDriver(program: Command, config: PomodoroConfig, flags: DriverFlag
   let confirmPending = false;
   let rl: readline.Interface | undefined;
   let pendingChild: { kill?: () => void } | undefined;
+  // Wake-jump guard (005 D6): wall-clock of the last live tick. Quiet drift
+  // is measured per-timeout via its scheduled-at stamp (see armQuietTimeout).
+  let lastLiveWallMs = Date.now();
 
   const notifyExec: ExecFileFn = (file, args) =>
     new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
@@ -427,7 +456,9 @@ function startDriver(program: Command, config: PomodoroConfig, flags: DriverFlag
   function resumeTimers(): void {
     if (finished || timer.paused) return;
     if (flags.live) {
-      interval ??= setInterval(onLiveTick, 250);
+      interval ??= setInterval(() => {
+        void onLiveTick();
+      }, 250);
     } else {
       armQuietTimeout();
     }
@@ -505,8 +536,74 @@ function startDriver(program: Command, config: PomodoroConfig, flags: DriverFlag
     }
   }
 
-  function onLiveTick(): void {
+  function onScreenState(state: ScreenState): void {
+    // --no-screen-pause opts out entirely: ignore lock/unlock even if a
+    // monitor (or test stub) reports locked. Default selects NoopMonitor
+    // (no polling), this guard covers injected stubs in tests.
+    if (!flags.screenPause) return;
+    // Countdown already frozen while awaiting an answer: lock/unlock is a no-op.
     if (finished || confirmPending) return;
+    const now = Date.now();
+    if (state !== 'active') {
+      if (timer.paused) return;
+      timer.pause('screen', now);
+      if (flags.live) {
+        render(`${buildPhaseLine(timer, config, names, now)} (paused — screen locked)`);
+      } else {
+        if (timeout !== undefined) {
+          clearTimeout(timeout);
+          timeout = undefined;
+        }
+        process.stdout.write(
+          `Paused ${phaseLabel(timer.phase, names)} — screen locked, timer frozen\n`,
+        );
+      }
+    } else {
+      if (!timer.paused) return;
+      timer.resume('screen', now);
+      if (flags.live) {
+        render(buildPhaseLine(timer, config, names, now));
+      } else {
+        process.stdout.write(
+          `Resumed ${phaseLabel(timer.phase, names)} — ${formatClock(timer.remainingMs(now))} remaining\n`,
+        );
+        armQuietTimeout();
+      }
+    }
+  }
+
+  async function checkWakeJump(isLive: boolean, quietScheduledAtMs: number): Promise<boolean> {
+    // 005 D6: lid-close sleep freezes the process; on wake Date.now() jumps
+    // and the first tick would cascade expired phases with rapid bells before
+    // the next poll notices we're locked. Probe first on large drift and
+    // apply a lock-freeze before any tick(). Returns true to skip ticking.
+    // Fail open: probe errors resolve active and ticking proceeds.
+    const now = Date.now();
+    const drift = isLive ? now - lastLiveWallMs : now - quietScheduledAtMs;
+    if (isLive) {
+      lastLiveWallMs = now;
+    }
+    // Opt-out never probes: NoopMonitor is active-only, and injected stubs
+    // must not freeze an opted-out timer (see --no-screen-pause test).
+    if (!flags.screenPause) return false;
+    if (drift <= JUMP_THRESHOLD_MS) return false;
+    let probed: ScreenState;
+    try {
+      probed = await monitor.probeNow();
+    } catch {
+      probed = 'active';
+    }
+    if (finished || confirmPending) return true;
+    onScreenState(probed);
+    if (finished || confirmPending) return true;
+    // Lock-freeze applied (or already paused): skip ticking this round.
+    // Active + running falls through to normal tick logic.
+    return timer.paused;
+  }
+
+  async function onLiveTick(): Promise<void> {
+    if (finished || confirmPending) return;
+    if (await checkWakeJump(true, 0)) return;
     const now = Date.now();
     if (timer.paused) {
       render(`${buildPhaseLine(timer, config, names, now)} (paused — screen locked)`);
@@ -541,76 +638,54 @@ function startDriver(program: Command, config: PomodoroConfig, flags: DriverFlag
   function armQuietTimeout(): void {
     if (finished || timer.paused || confirmPending) return;
     const delay = Math.max(0, timer.remainingMs(Date.now()));
+    const scheduledAt = Date.now();
     timeout = setTimeout(() => {
       timeout = undefined;
-      if (finished || confirmPending) return;
-      if (timer.paused) return;
-      const now = Date.now();
-      if (timer.remainingMs(now) > 0) {
-        armQuietTimeout();
-        return;
-      }
-      if (!gating) {
-        const before = timer.phase;
-        timer.tick(now);
-        if (timer.phase === before) {
-          armQuietTimeout();
-          return;
-        }
-        if (!flags.loop && before === 'longBreak' && timer.phase === 'focus') {
-          // Terminal long break: ring + summary only (no next-focus line).
-          process.stdout.write(`\x07\n${buildSummaryLine(timer.focusCount, names)}\n`);
-          finish();
-          return;
-        }
-        process.stdout.write(`\x07\n${buildPhaseLine(timer, config, names, now)}\n`);
-        notifyEntered(before, timer.phase);
-        armQuietTimeout();
-        return;
-      }
-      confirmPending = true;
-      void runConfirmFlow();
+      void onQuietFire(scheduledAt);
     }, delay);
   }
 
-  const unsubscribe = monitor.subscribe((state: ScreenState) => {
-    // Countdown already frozen while awaiting an answer: lock/unlock is a no-op.
+  async function onQuietFire(scheduledAt: number): Promise<void> {
     if (finished || confirmPending) return;
+    if (timer.paused) return;
+    if (await checkWakeJump(false, scheduledAt)) return;
     const now = Date.now();
-    if (state !== 'active') {
-      if (timer.paused) return;
-      timer.pause('screen', now);
-      if (flags.live) {
-        render(`${buildPhaseLine(timer, config, names, now)} (paused — screen locked)`);
-      } else {
-        if (timeout !== undefined) {
-          clearTimeout(timeout);
-          timeout = undefined;
-        }
-        process.stdout.write(
-          `Paused ${phaseLabel(timer.phase, names)} — screen locked, timer frozen\n`,
-        );
-      }
-    } else {
-      if (!timer.paused) return;
-      timer.resume('screen', now);
-      if (flags.live) {
-        render(buildPhaseLine(timer, config, names, now));
-      } else {
-        process.stdout.write(
-          `Resumed ${phaseLabel(timer.phase, names)} — ${formatClock(timer.remainingMs(now))} remaining\n`,
-        );
-        armQuietTimeout();
-      }
+    if (timer.remainingMs(now) > 0) {
+      armQuietTimeout();
+      return;
     }
-  });
+    if (!gating) {
+      const before = timer.phase;
+      timer.tick(now);
+      if (timer.phase === before) {
+        armQuietTimeout();
+        return;
+      }
+      if (!flags.loop && before === 'longBreak' && timer.phase === 'focus') {
+        // Terminal long break: ring + summary only (no next-focus line).
+        process.stdout.write(`\x07\n${buildSummaryLine(timer.focusCount, names)}\n`);
+        finish();
+        return;
+      }
+      process.stdout.write(`\x07\n${buildPhaseLine(timer, config, names, now)}\n`);
+      notifyEntered(before, timer.phase);
+      armQuietTimeout();
+      return;
+    }
+    confirmPending = true;
+    void runConfirmFlow();
+  }
+
+  const unsubscribe = monitor.subscribe(onScreenState);
 
   process.on('SIGINT', onSigint);
 
   if (flags.live) {
     render(buildPhaseLine(timer, config, names, Date.now()));
     notifyEntered(undefined, timer.phase);
-    interval = setInterval(onLiveTick, 250);
+    interval = setInterval(() => {
+      void onLiveTick();
+    }, 250);
   } else {
     process.stdout.write(`${buildPhaseLine(timer, config, names, Date.now())}\n`);
     notifyEntered(undefined, timer.phase);
@@ -624,8 +699,8 @@ function startDriver(program: Command, config: PomodoroConfig, flags: DriverFlag
  * Run the CLI with user-style arguments (no `node` / script path entries).
  * Returns the process exit code instead of exiting, for easy testing.
  */
-export async function run(argv: readonly string[]): Promise<number> {
-  const program = createProgram();
+export async function run(argv: readonly string[], opts?: RunOptions): Promise<number> {
+  const program = createProgram(opts?.monitor);
   // Throw CommanderError instead of process.exit() so run() can return exit codes.
   program.exitOverride();
 

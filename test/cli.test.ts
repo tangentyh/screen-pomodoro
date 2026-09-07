@@ -203,7 +203,12 @@ describe('cli', () => {
     const runPromise = run(['--focus', '1s', '--short', '1s', '--long', '1s']);
     await vi.advanceTimersByTimeAsync(0);
     expect(setTimeoutSpy).toHaveBeenCalled();
-    expect(setIntervalSpy).not.toHaveBeenCalled();
+    // 005: quiet still polls for screen lock (2000ms) on darwin, but never
+    // arms the live 250ms countdown. Filter by interval ms, not any call.
+    const intervals = setIntervalSpy.mock.calls
+      .map((call) => call[1])
+      .filter((ms): ms is number => typeof ms === 'number');
+    expect(intervals).not.toContain(250);
     expect(out.mock.calls.length).toBeGreaterThan(0);
 
     process.emit('SIGINT');

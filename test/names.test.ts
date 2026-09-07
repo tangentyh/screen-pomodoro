@@ -10,7 +10,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { run } from '../src/cli.js';
-import { NoopMonitor } from '../src/screen.js';
+import { NoopMonitor, PollingMonitor } from '../src/screen.js';
 
 // ---------------------------------------------------------------------------
 // helpers (mirrors test/cli.test.ts)
@@ -44,12 +44,16 @@ function setStdoutIsTTY(value: boolean | undefined): void {
 /** Capture the screen-monitor listener so tests can fire locked/active. */
 function captureScreenListener(): { get: () => ((s: 'active' | 'locked') => void) | undefined } {
   let captured: ((s: 'active' | 'locked') => void) | undefined;
-  vi.spyOn(NoopMonitor.prototype, 'subscribe').mockImplementation(
-    (listener: (s: 'active' | 'locked') => void) => {
-      captured = listener;
-      return () => undefined;
-    },
-  );
+  const capture = (listener: (s: 'active' | 'locked') => void): (() => void) => {
+    captured = listener;
+    return () => undefined;
+  };
+  // 005: driver uses PollingMonitor on darwin, NoopMonitor elsewhere/
+  // opt-out. Spy both so the capture works regardless of backend (the real
+  // poll interval hasn't fired yet for the short advances below, so no real
+  // ioreg spawn interferes).
+  vi.spyOn(NoopMonitor.prototype, 'subscribe').mockImplementation(capture);
+  vi.spyOn(PollingMonitor.prototype, 'subscribe').mockImplementation(capture);
   return { get: () => captured };
 }
 
