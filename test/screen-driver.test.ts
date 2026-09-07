@@ -39,6 +39,7 @@ function countBells(text: string): number {
 }
 
 const originalStdoutIsTTY: boolean | undefined = (process.stdout as { isTTY?: boolean }).isTTY;
+const originalPlatform = process.platform;
 
 function setStdoutIsTTY(value: boolean | undefined): void {
   if (value === undefined) {
@@ -50,6 +51,15 @@ function setStdoutIsTTY(value: boolean | undefined): void {
       writable: true,
     });
   }
+}
+
+function setPlatform(value: typeof process.platform): void {
+  Object.defineProperty(process, 'platform', {
+    value,
+    configurable: true,
+    writable: false,
+    enumerable: true,
+  });
 }
 
 async function advance(ms: number): Promise<void> {
@@ -163,12 +173,18 @@ describe('005 step 2 — factory wiring: default polls, opt-out stays idle', () 
 
   beforeEach(() => {
     sigintBaseline = process.listenerCount('SIGINT');
+    // Factory picks the backend from process.platform: pin darwin so the
+    // default-path assertions below hold on any CI OS (linux → NoopMonitor
+    // by design, per 005). No probe fires here (advance(0) only), so this
+    // stays hermetic — no real ioreg spawn.
+    setPlatform('darwin');
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
     vi.useRealTimers();
     setStdoutIsTTY(originalStdoutIsTTY);
+    setPlatform(originalPlatform);
     expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
   });
 
@@ -227,6 +243,25 @@ describe('005 step 2 — factory wiring: default polls, opt-out stays idle', () 
       expect(pollIntervals(setIntervalSpy)).not.toContain(2000);
     } finally {
       await settle(runPromise);
+    }
+  });
+  it('off-darwin default stays idle (NoopMonitor, no 2000ms poll)', async () => {
+    for (const platform of ['linux', 'win32'] as const) {
+      setPlatform(platform);
+      vi.useFakeTimers();
+      vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+      const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
+      const runPromise = run(['--focus', '60s', '--short', '60s', '--long', '60s', '--quiet']);
+      try {
+        await advance(0);
+        // Per 005 the factory returns NoopMonitor off-darwin: the timer
+        // runs, but no screen poll is armed.
+        expect(pollIntervals(setIntervalSpy)).not.toContain(2000);
+      } finally {
+        await settle(runPromise);
+      }
+      vi.restoreAllMocks();
+      vi.useRealTimers();
     }
   });
 });
@@ -516,6 +551,7 @@ describe('005 step 2 — wake-jump guard (D6: JUMP_THRESHOLD_MS = 5000)', () => 
     vi.restoreAllMocks();
     vi.useRealTimers();
     setStdoutIsTTY(originalStdoutIsTTY);
+    setPlatform(originalPlatform);
     expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
   });
 
@@ -583,6 +619,8 @@ describe('005 step 2 — wake-jump guard (D6: JUMP_THRESHOLD_MS = 5000)', () => 
   });
 
   it('quiet SIGINT clears the poll interval (no orphaned 2000ms wakeups)', async () => {
+    // Real-factory test: pin darwin (linux → NoopMonitor by design, per 005).
+    setPlatform('darwin');
     vi.useFakeTimers();
     vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');

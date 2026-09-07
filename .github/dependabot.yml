@@ -9,6 +9,20 @@ updates:
         update-types:
           - minor
           - patch
+      # vitest and @vitest/coverage-v8 are peer-coupled: bumping one major
+      # without the other breaks `npm ci` (ERESOLVE), so they always ride
+      # together — majors included.
+      vitest:
+        patterns:
+          - vitest
+          - '@vitest/*'
+    ignore:
+      # No released typescript-eslint supports TypeScript 7 yet (peer caps
+      # TS at <6.1.0), so the TS 7 bump can never resolve. Re-enable once
+      # upstream catches up.
+      - dependency-name: typescript
+        update-types:
+          - version-update:semver-major
   - package-ecosystem: github-actions
     directory: /
     schedule:
