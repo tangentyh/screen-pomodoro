@@ -7,3 +7,4 @@ Accepted records are binding — follow them, don't relitigate. Proposed records
 - `003-confirm-and-names.md` (accepted, incl. amendment 003a frozen gating) — `--confirm` gate math, phase-name rules.
 - `004-desktop-notifications-macos.md` (accepted) — macOS `--notify` / `--notify-confirm` via `terminal-notifier`, extends 003.
 - `005-screen-lock-macos.md` (accepted) — pause-on-lock via `ioreg` polling on macOS (`PollingMonitor` + `probeNow` + wake-jump guard, `--no-screen-pause` opt-out); implements 002's seam, Linux/Windows stay on `NoopMonitor`.
+- `006-live-pause-history.md` (accepted) — live keeps the in-place paused suffix and also leaves the `Paused`/`Resumed` pair in scrollback; amends 002 Timing, 003 table, 005 G1.
