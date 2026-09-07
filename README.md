@@ -4,8 +4,6 @@
 
 A tiny CLI pomodoro timer that pauses when your screen locks.
 
-> 🚧 **Under construction** — the repo currently holds the CLI scaffold (entry point, `--help` / `--version` plumbing, tests, CI). The pomodoro timing and screen-lock awareness land in an upcoming release.
-
 - Runnable via `npx` — no install step required
 - Fully typed TypeScript (strict, ESM), tested with Vitest
 
