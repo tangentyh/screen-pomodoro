@@ -105,6 +105,17 @@ export function startDriver(
   let confirmPending = false;
   let rl: readline.Interface | undefined;
   let pendingChild: { kill?: () => void } | undefined;
+  /**
+   * Raw screen edge, tracked even while a confirm prompt owns the countdown
+   * (where the pause itself is a no-op). Lets an unlock re-send a pending
+   * `--notify-confirm` toast that the lock may have taken off screen.
+   */
+  let screenLocked = false;
+  /**
+   * Unlock-resend handshake for the notification confirmer: one request per
+   * unlock edge, consumed there (or dropped when an answer wins the race).
+   */
+  let confirmResendRequested = false;
   // Wake-jump guard (005 D6): wall-clock of the last live tick. Quiet drift
   // is measured per-timeout via its scheduled-at stamp (see armQuietTimeout).
   let lastLiveWallMs = Date.now();
@@ -133,7 +144,13 @@ export function startDriver(
     });
 
   function notifyEntered(before: Phase | undefined, entered: Phase): void {
-    if (!useNotify || finished) return;
+    // Never fire a toast while the countdown is frozen on a locked screen:
+    // the tick paths bail out while paused, but a transition can still win
+    // the race just before the lock is noticed (or startup can land while
+    // locked). A skipped toast is replaced in place by the next entry's
+    // toast (shared -group), so nothing stacks and nothing shows on the
+    // lock screen. The Paused history line remains the source of truth.
+    if (!useNotify || finished || timer.paused) return;
     const title = buildNotifyTitle(entered, config, names, timer.focusCount);
     const message = buildNotifyMessage(before, entered, config, names, timer.focusCount);
     void sendNotification(notifyExec, { title, message });
@@ -152,6 +169,22 @@ export function startDriver(
         // Best-effort: a dead prompt must never block exit.
       }
     }
+  }
+
+  /**
+   * Unlock-resend: kill the waiting `--notify-confirm` child so the
+   * confirmer re-sends the same toast (same `-group`, replaces in place).
+   * Banner toasts auto-dismiss and the lock-time `-remove` shares the
+   * group, so without this the timer could wait forever behind an
+   * invisible prompt. No-ops unless a notification prompt is actually
+   * pending; a click that already landed keeps its answer (the kill finds
+   * no child, the stale request is dropped on success).
+   */
+  function requestConfirmResend(): void {
+    if (!useNotifyConfirm || finished || !confirmPending) return;
+    if (pendingChild === undefined) return;
+    confirmResendRequested = true;
+    killPendingNotifier();
   }
 
   function removeToast(): void {
@@ -295,6 +328,11 @@ export function startDriver(
           title,
           message,
           isFinished: () => finished,
+          consumeResendRequest: () => {
+            const requested = confirmResendRequested;
+            confirmResendRequested = false;
+            return requested;
+          },
         });
         confirmed = await confirmer(message);
       } else {
@@ -345,12 +383,31 @@ export function startDriver(
     // monitor (or test stub) reports locked. Default selects NoopMonitor
     // (no polling), this guard covers injected stubs in tests.
     if (!flags.screenPause) return;
+    // Raw edge first: tracked even while a confirm prompt owns the
+    // countdown, where everything below is a no-op. An unlock with a
+    // `--notify-confirm` toast pending re-sends it — the lock may have
+    // taken it off screen (Banner auto-dismiss, and the lock-time `-remove`
+    // shares the group), and the timer must not wait behind an invisible
+    // prompt. No-op for stdin `--confirm` (nothing to re-show) and whenever
+    // no prompt is pending.
+    if (state !== 'active') {
+      screenLocked = true;
+    } else {
+      const wasLocked = screenLocked;
+      screenLocked = false;
+      if (wasLocked) requestConfirmResend();
+    }
     // Countdown already frozen while awaiting an answer: lock/unlock is a no-op.
     if (finished || confirmPending) return;
     const now = Date.now();
     if (state !== 'active') {
       if (timer.paused) return;
       timer.pause('screen', now);
+      // Dismiss any toast that fired in the poll gap just before the lock
+      // was noticed: firing during a lock is the bug, lingering on the
+      // lock screen after is worse. Best-effort; ignored on failure.
+      // No-op without --notify/--notify-confirm (guarded inside).
+      removeToast();
       if (flags.live) {
         // Tidy 006: history replaces the suffix; suspend ticks while paused
         // (idle like quiet — only the 2000ms poll stays armed).
@@ -501,13 +558,23 @@ export function startDriver(
     const startedAt = Date.now();
     commitLiveLine(stamp(buildPhaseLine(timer, config, names, startedAt), startedAt));
     render(buildPhaseLine(timer, config, names, startedAt));
+    // Start-while-locked: freeze immediately instead of running until the
+    // first poll notices (≤ POLL_MS). Paused line follows the birth line;
+    // the startup toast is skipped via the paused guard in notifyEntered,
+    // so nothing fires on the lock screen. No-op when active/opted out.
+    onScreenState(monitor.getInitialState());
     notifyEntered(undefined, timer.phase);
-    interval = setInterval(() => {
-      void onLiveTick();
-    }, 250);
+    if (!timer.paused) {
+      interval = setInterval(() => {
+        void onLiveTick();
+      }, 250);
+    }
   } else {
     const startedAt = Date.now();
     process.stdout.write(`${stamp(buildPhaseLine(timer, config, names, startedAt), startedAt)}\n`);
+    // Same start-while-locked freeze as the live path (armQuietTimeout
+    // already stays idle while paused).
+    onScreenState(monitor.getInitialState());
     notifyEntered(undefined, timer.phase);
     armQuietTimeout();
   }

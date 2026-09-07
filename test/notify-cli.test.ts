@@ -21,6 +21,7 @@
 import * as childProcess from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { run } from '../src/cli.js';
+import type { ScreenMonitor, ScreenState } from '../src/screen.js';
 
 // ESM module namespaces are not spy-able: stub `node:child_process` so no
 // test ever spawns the real `terminal-notifier` binary. Per-test helpers
@@ -167,7 +168,19 @@ function mockBinaryManual(): {
     if (argv.includes('-action')) {
       confirmArgvs.push(argv);
       pending.push(cb);
-      return {};
+      // Killable like the real child: SIGTERM surfaces as a spawn error so
+      // the driver's unlock-resend and SIGINT kills stay observable here.
+      return {
+        kill: (): void => {
+          const idx = pending.indexOf(cb);
+          if (idx >= 0) {
+            pending.splice(idx, 1);
+            cb(
+              Object.assign(new Error('Command failed: terminal-notifier'), { signal: 'SIGTERM' }),
+            );
+          }
+        },
+      };
     }
     deliveries.push(argv);
     queueMicrotask(() => cb(null, '', ''));
@@ -613,5 +626,213 @@ describe('004 step 2 — --notify-confirm blocking gate', () => {
     await expect(runPromise).resolves.toBe(0);
     expect(confirmArgvs()).toHaveLength(1);
     expect(stdoutText(out)).toMatch(/Completed 1 focuses/);
+  });
+});
+
+describe('notify + screen lock — no toast fires while locked', () => {
+  let sigintBaseline = 0;
+
+  beforeEach(() => {
+    sigintBaseline = process.listenerCount('SIGINT');
+    mockedExecFile().mockClear();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+    setStdoutIsTTY(originalStdoutIsTTY);
+    setStdinIsTTY(originalStdinIsTTY);
+    setPlatform(originalPlatform);
+    expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
+  });
+
+  /**
+   * Hermetic stub monitor (mirrors test/screen-driver.test.ts): `fire()`
+   * drives subscription transitions synchronously, so lock/unlock timing is
+   * exact — never a real `ioreg` spawn (the exec mock only ever sees
+   * `terminal-notifier`).
+   */
+  class StubMonitor implements ScreenMonitor {
+    private readonly listeners = new Set<(s: ScreenState) => void>();
+    private lastKnown: ScreenState;
+
+    constructor(initial: ScreenState = 'active') {
+      this.lastKnown = initial;
+    }
+
+    subscribe(listener: (s: ScreenState) => void): () => void {
+      this.listeners.add(listener);
+      let unsubscribed = false;
+      return () => {
+        if (unsubscribed) return;
+        unsubscribed = true;
+        this.listeners.delete(listener);
+      };
+    }
+
+    getInitialState(): ScreenState {
+      return this.lastKnown;
+    }
+
+    async probeNow(): Promise<ScreenState> {
+      return this.lastKnown;
+    }
+
+    fire(state: ScreenState): void {
+      this.lastKnown = state;
+      for (const listener of [...this.listeners]) {
+        listener(state);
+      }
+    }
+  }
+
+  /** Delivered toasts only (`-title` present — excludes `-remove`/`-version`). */
+  function notifyTitles(): (string | undefined)[] {
+    return allArgvs()
+      .filter((argv) => argv.includes('-title'))
+      .map((argv) => argv[argv.indexOf('-title') + 1]);
+  }
+
+  function removals(): string[][] {
+    return allArgvs().filter((argv) => argv.includes('-remove'));
+  }
+
+  it('quiet: lock at expiry suppresses the transition toast (withdraws the stale one), unlock delivers it', async () => {
+    vi.useFakeTimers();
+    setPlatform('darwin');
+    mockBinaryAvailable();
+    const stub = new StubMonitor('active');
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const runPromise = run(
+      ['--focus', '2s', '--short', '60s', '--long', '60s', '--cycles', '4', '--quiet', '--notify'],
+      { monitor: stub },
+    );
+    try {
+      await advance(0);
+      expect(stdoutText(out)).toContain('Focus 1/4');
+      expect(notifyTitles()).toContain('Focus 1/4');
+      // Lock lands just before the 2s deadline.
+      stub.fire('locked');
+      await advance(0);
+      expect(stdoutText(out)).toMatch(/Paused Focus — screen locked, timer frozen/);
+      // The startup toast must not linger on the lock screen.
+      expect(removals().length).toBeGreaterThan(0);
+      expect(removals()[0]).toContain('screen-pomodoro');
+      const titlesWhileLocked = notifyTitles().length;
+      // Run well past the deadline while locked: no phase change, no bell,
+      // and crucially no new toast fired during the lock.
+      await advance(5_000);
+      await advance(0);
+      expect(stdoutText(out)).not.toContain('Short break');
+      expect(countBells(stdoutText(out))).toBe(0);
+      expect(notifyTitles().length).toBe(titlesWhileLocked);
+      // Unlock defers the transition until now: line + bell + toast land together.
+      stub.fire('active');
+      await advance(0);
+      expect(stdoutText(out)).toMatch(/Resumed Focus — \d+:\d\d remaining/);
+      await advance(2_500);
+      await advance(0);
+      expect(stdoutText(out)).toContain('Short break');
+      expect(notifyTitles()).toContain('Short break');
+      expect(countBells(stdoutText(out))).toBeGreaterThan(0);
+    } finally {
+      process.emit('SIGINT');
+      await expect(runPromise).resolves.toBe(0);
+    }
+  });
+
+  it('quiet: starting while locked fires no startup toast, first transition still notifies after unlock', async () => {
+    vi.useFakeTimers();
+    setPlatform('darwin');
+    mockBinaryAvailable();
+    const stub = new StubMonitor('locked');
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const runPromise = run(
+      ['--focus', '2s', '--short', '60s', '--long', '60s', '--cycles', '4', '--quiet', '--notify'],
+      { monitor: stub },
+    );
+    try {
+      await advance(0);
+      // Birth line + immediate freeze, but no toast on the lock screen.
+      expect(stdoutText(out)).toContain('Focus 1/4');
+      expect(stdoutText(out)).toMatch(/Paused Focus — screen locked, timer frozen/);
+      expect(notifyTitles()).toHaveLength(0);
+      // Frozen: time passes, nothing new fires.
+      const frozen = stdoutText(out);
+      await advance(10_000);
+      await advance(0);
+      expect(stdoutText(out)).toBe(frozen);
+      expect(countBells(stdoutText(out))).toBe(0);
+      // Unlock resumes the same focus; its expiry then notifies normally.
+      stub.fire('active');
+      await advance(0);
+      expect(stdoutText(out)).toMatch(/Resumed Focus — \d+:\d\d remaining/);
+      await advance(2_500);
+      await advance(0);
+      expect(stdoutText(out)).toContain('Short break');
+      expect(notifyTitles()).toContain('Short break');
+    } finally {
+      process.emit('SIGINT');
+      await expect(runPromise).resolves.toBe(0);
+    }
+  });
+
+  it('--notify-confirm: lock keeps the pending toast unanswered, unlock re-sends it, click still counts', async () => {
+    vi.useFakeTimers();
+    setPlatform('darwin');
+    setStdinIsTTY(false);
+    const manual = mockBinaryManual();
+    const errOut = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const stub = new StubMonitor('active');
+    const runPromise = run(
+      [
+        '--focus',
+        '2s',
+        '--short',
+        '60s',
+        '--long',
+        '60s',
+        '--cycles',
+        '4',
+        '--quiet',
+        '--notify-confirm',
+      ],
+      { monitor: stub },
+    );
+    try {
+      await advance(0);
+      await advance(2_200);
+      await advance(0);
+      expect(stdoutText(out)).toContain('Focus 1/4');
+      expect(manual.confirmCalls()).toBe(1);
+      expect(countBells(stdoutText(out))).toBe(1);
+      // Lock with the toast pending: the prompt survives (answer still wins),
+      // nothing re-prompts into the lock and no bell repeats.
+      stub.fire('locked');
+      await advance(0);
+      await advance(5_000);
+      await advance(0);
+      expect(manual.confirmCalls()).toBe(1);
+      expect(countBells(stdoutText(out))).toBe(1);
+      expect(stdoutText(out)).not.toContain('Short break');
+      // Unlock re-sends the identical toast (same -group, replaces in place)
+      // so the decision is answerable again — silently (no second bell).
+      stub.fire('active');
+      await advance(0);
+      expect(manual.confirmCalls()).toBe(2);
+      expect(manual.confirmArgvs[1]).toEqual(manual.confirmArgvs[0]);
+      expect(countBells(stdoutText(out))).toBe(1);
+      expect(stderrText(errOut)).toBe('');
+      // The post-unlock click counts exactly once.
+      manual.answerNext('@ACTIONCLICKED');
+      await advance(0);
+      expect(stdoutText(out)).toContain('Short break');
+      expect(manual.confirmCalls()).toBe(2);
+    } finally {
+      process.emit('SIGINT');
+      await expect(runPromise).resolves.toBe(0);
+      expect(stdoutText(out)).toMatch(/Completed 1 focuses/);
+    }
   });
 });

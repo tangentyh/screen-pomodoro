@@ -443,6 +443,66 @@ describe('004 — createNotificationConfirmer mapping table (D2)', () => {
     await expect(confirm('ignored')).resolves.toBe(false);
     expect(exec).not.toHaveBeenCalled();
   });
+
+  it('consumeResendRequest: driver kill for unlock-resend re-sends silently instead of failing', async () => {
+    let resend = true; // unlock killed the waiting child
+    const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const queue: (string | Error)[] = [
+      Object.assign(new Error('Command failed: terminal-notifier'), { signal: 'SIGTERM' }),
+      '@ACTIONCLICKED',
+    ];
+    const exec = vi.fn(async (_file: string, _args: readonly string[]): Promise<ExecResult> => {
+      const next = queue.shift();
+      if (next instanceof Error) throw next;
+      return { stdout: next ?? '', stderr: '' };
+    });
+    const confirm = createNotificationConfirmer(exec, {
+      title: 't',
+      message: 'm',
+      consumeResendRequest: () => {
+        const requested = resend;
+        resend = false;
+        return requested;
+      },
+    });
+    await expect(confirm('ignored')).resolves.toBe(true);
+    // Same toast re-sent (second call, identical argv), no stderr note.
+    expect(exec).toHaveBeenCalledTimes(2);
+    const firstArgv = exec.mock.calls[0]?.[1] as string[];
+    const secondArgv = exec.mock.calls[1]?.[1] as string[];
+    expect(secondArgv).toEqual(firstArgv);
+    expect(errSpy).not.toHaveBeenCalled();
+  });
+
+  it('an answer that raced the unlock drops the stale resend request (later failure still resolves false)', async () => {
+    let resend = true; // unlock landed just as the click did; the click won
+    const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const exec = vi.fn(async (): Promise<ExecResult> => ({ stdout: '@ACTIONCLICKED', stderr: '' }));
+    const consume = (): boolean => {
+      const requested = resend;
+      resend = false;
+      return requested;
+    };
+    const first = createNotificationConfirmer(exec, {
+      title: 't',
+      message: 'm',
+      consumeResendRequest: consume,
+    });
+    await expect(first('ignored')).resolves.toBe(true);
+    // Success cleared the raced flag: a later genuine failure resolves
+    // false with a note instead of re-sending forever.
+    const failing = vi.fn(async (): Promise<ExecResult> => {
+      throw new Error('spawn terminal-notifier ENOENT');
+    });
+    const second = createNotificationConfirmer(failing, {
+      title: 't',
+      message: 'm',
+      consumeResendRequest: consume,
+    });
+    await expect(second('ignored')).resolves.toBe(false);
+    expect(failing).toHaveBeenCalledTimes(1);
+    expect(errSpy).toHaveBeenCalled();
+  });
 });
 
 describe('004 — module constraints (D1 driver-only, D5 execFile-only)', () => {

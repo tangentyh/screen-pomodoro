@@ -38,6 +38,16 @@ export interface NotifyPayload {
 
 export interface NotifyConfirmerOptions extends NotifyPayload {
   isFinished?: (() => boolean) | undefined;
+  /**
+   * Unlock-resend handshake (driver-owned). The driver sets the request
+   * when the screen unlocks with this prompt pending and kills the waiting
+   * `terminal-notifier` child, which surfaces here as a spawn error.
+   * Return-and-clear semantics: `true` consumes one request (re-send the
+   * same toast instead of failing the prompt). Also consulted after a
+   * successful answer so an unlock that raced the click cannot leak a
+   * stale request into a later prompt.
+   */
+  consumeResendRequest?: (() => boolean) | undefined;
 }
 
 // Structural mirrors of the timer core's `Phase` / `PomodoroConfig` — kept
@@ -207,6 +217,7 @@ export function createNotificationConfirmer(
 ): (message: string) => Promise<boolean> {
   const argv = [...baseArgv(opts.title, opts.message), '-action', NO_LABEL];
   const isFinished = opts.isFinished;
+  const consumeResendRequest = opts.consumeResendRequest;
   return async (_message: string): Promise<boolean> => {
     if (isFinished?.() === true) return false;
     for (;;) {
@@ -216,12 +227,20 @@ export function createNotificationConfirmer(
         const result = await exec(NOTIFIER_BIN, argv);
         raw = result.stdout.trim();
       } catch (err) {
+        if (isFinished?.() === true) return false;
+        // Driver-initiated kill for unlock-resend: the prompt is still
+        // owed, so re-send the same toast (same -group, replaces in
+        // place) instead of resolving `false`.
+        if (consumeResendRequest?.() === true) continue;
         process.stderr.write(
           `terminal-notifier confirm failed: ${err instanceof Error ? err.message : String(err)}\n`,
         );
         return false;
       }
       if (isFinished?.() === true) return false;
+      // An answer won: drop any resend request that raced the click, so a
+      // later prompt's genuine failure still resolves `false` (never spins).
+      consumeResendRequest?.();
       if (raw === '@ACTIONCLICKED') return true;
       if (raw === NO_LABEL) return false;
       if (raw === '@CLOSED' || raw === '@TIMEOUT') continue;
