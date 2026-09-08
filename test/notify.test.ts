@@ -33,6 +33,7 @@ import {
   GROUP_ID,
   isNotifySupported,
   NO_LABEL,
+  parseNotifyGroup,
   sendNotification,
   SOUND,
   type ExecFileFn,
@@ -502,6 +503,46 @@ describe('004 — createNotificationConfirmer mapping table (D2)', () => {
     await expect(second('ignored')).resolves.toBe(false);
     expect(failing).toHaveBeenCalledTimes(1);
     expect(errSpy).toHaveBeenCalled();
+  });
+});
+
+describe('008 — parseNotifyGroup + custom group isolation', () => {
+  it('defaults share GROUP_ID; custom group passes through verbatim', async () => {
+    const exec = okExec('');
+    await sendNotification(exec, { title: 't', message: 'm', group: 'work' });
+    const argv = argvOf(exec as unknown as { mock: { calls: unknown[][] } });
+    expect(argv[argv.indexOf('-group') + 1]).toBe('work');
+  });
+
+  it('confirmer carries the custom group into the blocking -action toast', async () => {
+    const exec = vi.fn(async (_file: string, _args: readonly string[]): Promise<ExecResult> => ({
+      stdout: '@ACTIONCLICKED',
+      stderr: '',
+    }));
+    const confirm = createNotificationConfirmer(exec, {
+      title: 't',
+      message: 'm',
+      group: 'stretch',
+    });
+    await expect(confirm('ignored')).resolves.toBe(true);
+    const argv = exec.mock.calls[0]?.[1] as unknown as string[];
+    expect(argv[argv.indexOf('-group') + 1]).toBe('stretch');
+  });
+
+  it('trims surrounding whitespace', () => {
+    expect(parseNotifyGroup('  work  ')).toBe('work');
+  });
+
+  it.each(['', '   ', 'a\nb', 'a\rb', 'a\tb', 'a\u0007b'])('rejects %p', (value) => {
+    expect(() => parseNotifyGroup(value)).toThrow(/group|empty|invalid/i);
+  });
+
+  it('rejects groups longer than 64 chars', () => {
+    expect(() => parseNotifyGroup('x'.repeat(65))).toThrow(/group|64/i);
+  });
+
+  it('allows spaces and emoji within the limit', () => {
+    expect(parseNotifyGroup('Deep work 🍅')).toBe('Deep work 🍅');
   });
 });
 

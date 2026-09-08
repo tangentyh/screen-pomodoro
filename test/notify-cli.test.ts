@@ -237,6 +237,32 @@ describe('004 step 2 — flags and fail-fast guards', () => {
     const help = stdoutText(out);
     expect(help).toContain('--notify');
     expect(help).toContain('--notify-confirm');
+    expect(help).toContain('--notify-group');
+  });
+
+  it('--notify-group without --notify/--notify-confirm is a usage error', async () => {
+    vi.useFakeTimers();
+    setPlatform('darwin');
+    mockBinaryAvailable();
+    const errOut = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    await expect(run(['--focus', '1s', '--quiet', '--notify-group', 'work'])).resolves.toBe(1);
+    expect(stderrText(errOut)).toMatch(/notify-group.*notify|notify.*notify-group/i);
+    expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
+  });
+
+  it.each([
+    ['--notify-group', ''],
+    ['--notify-group', '   '],
+    ['--notify-group', 'x'.repeat(65)],
+  ])('rejects %s %p with a usage error', async (flag, value) => {
+    vi.useFakeTimers();
+    setPlatform('darwin');
+    mockBinaryAvailable();
+    const errOut = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    await expect(run(['--focus', '1s', '--quiet', '--notify', flag, value])).resolves.toBe(1);
+    const stderr = stderrText(errOut);
+    expect(stderr).not.toMatch(/unknown option/i);
+    expect(stderr).toMatch(/group|empty|invalid/i);
   });
 
   it.each([['--notify'], ['--notify-confirm']])(
@@ -441,6 +467,65 @@ describe('004 step 2 — --notify fire-and-forget (no gating change)', () => {
     const removal = allArgvs().find((argv) => argv.includes('-remove'));
     expect(removal).toBeDefined();
     expect(removal).toContain('screen-pomodoro');
+  });
+
+  it('custom --notify-group isolates deliveries and exit removal', async () => {
+    vi.useFakeTimers();
+    setPlatform('darwin');
+    const { deliveries } = mockBinaryAvailable();
+    vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const runPromise = run([
+      '--focus',
+      '1s',
+      '--short',
+      '60s',
+      '--long',
+      '60s',
+      '--quiet',
+      '--notify',
+      '--notify-group',
+      'work',
+    ]);
+    await advance(0);
+    await advance(1_200);
+    await advance(0);
+    expect(deliveries.length).toBeGreaterThan(0);
+    for (const argv of deliveries) {
+      expect(argv[argv.indexOf('-group') + 1]).toBe('work');
+    }
+    process.emit('SIGINT');
+    await expect(runPromise).resolves.toBe(0);
+    const removal = allArgvs().find((argv) => argv.includes('-remove'));
+    expect(removal).toBeDefined();
+    expect(removal).toContain('work');
+    expect(removal).not.toContain('screen-pomodoro');
+  });
+
+  it('custom --notify-group carries into the --notify-confirm prompt', async () => {
+    vi.useFakeTimers();
+    setPlatform('darwin');
+    setStdinIsTTY(false);
+    mockBinaryAvailable(['@ACTIONCLICKED']);
+    vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const runPromise = run([
+      '--focus',
+      '1s',
+      '--short',
+      '60s',
+      '--long',
+      '60s',
+      '--quiet',
+      '--notify-confirm',
+      '--notify-group',
+      'stretch',
+    ]);
+    await advance(0);
+    await advance(1_200);
+    await advance(0);
+    const prompted = confirmArgvs()[0] ?? [];
+    expect(prompted[prompted.indexOf('-group') + 1]).toBe('stretch');
+    process.emit('SIGINT');
+    await expect(runPromise).resolves.toBe(0);
   });
 });
 

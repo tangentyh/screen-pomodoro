@@ -16,7 +16,6 @@ import {
   buildNotifyMessage,
   buildNotifyTitle,
   createNotificationConfirmer,
-  GROUP_ID,
   sendNotification,
   type ExecFileFn,
 } from './notify.js';
@@ -35,6 +34,7 @@ export interface DriverFlags {
   confirm: boolean;
   notify: boolean;
   notifyConfirm: boolean;
+  notifyGroup: string;
   screenPause: boolean;
 }
 
@@ -153,7 +153,7 @@ export function startDriver(
     if (!useNotify || finished || timer.paused) return;
     const title = buildNotifyTitle(entered, config, names, timer.focusCount);
     const message = buildNotifyMessage(before, entered, config, names, timer.focusCount);
-    void sendNotification(notifyExec, { title, message });
+    void sendNotification(notifyExec, { title, message, group: flags.notifyGroup });
   }
 
   function killPendingNotifier(): void {
@@ -190,7 +190,7 @@ export function startDriver(
   function removeToast(): void {
     if (!useNotify && !useNotifyConfirm) return;
     try {
-      execFileCallback('terminal-notifier', ['-remove', GROUP_ID], () => undefined);
+      execFileCallback('terminal-notifier', ['-remove', flags.notifyGroup], () => undefined);
     } catch {
       // Best-effort cleanup: ignore delivery/removal failures on exit.
     }
@@ -327,6 +327,7 @@ export function startDriver(
         const confirmer = createNotificationConfirmer(notifyExec, {
           title,
           message,
+          group: flags.notifyGroup,
           isFinished: () => finished,
           consumeResendRequest: () => {
             const requested = confirmResendRequested;

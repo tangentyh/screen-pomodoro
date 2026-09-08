@@ -58,6 +58,7 @@ Options:
   --confirm            Awaits y/n on each phase transition (requires interactive stdin).
   --notify             Send a macOS notification on each phase transition (macOS + terminal-notifier required).
   --notify-confirm     Answer phase transitions by clicking the notification (click = yes, No = no). Implies the confirm gate; does not require interactive stdin.
+  --notify-group <id>  Notification group for overlapping timers (default shares one toast).
   --no-screen-pause    Do not pause when the screen locks.
   --focus-name <name>  Custom label for focus phases. (default: "Focus")
   --short-name <name>  Custom label for short breaks. (default: "Short break")
@@ -114,6 +115,11 @@ Click = yes, No = restart`). Click the body for yes, the `No` button for
   counts exactly once.
 - `--notify-confirm` cannot be combined with `--confirm` or `--notify`
   (one source only), and unlike `--confirm` it works without a TTY.
+- Overlapping timers: by default all timers share one group, so the second
+  timer's toast replaces the first's. Pass distinct `--notify-group <id>`
+  values (e.g. `--notify-group work` vs `--notify-group stretch`) to keep
+  each timer's toasts, prompts, and cleanup isolated. Requires `--notify`
+  or `--notify-confirm`; at most 64 characters, no control characters.
 - Caveats: Focus/DnD holds the toast (timers stay frozen, as with stdin);
   over SSH / launchd-as-root delivery fails (exit 4) → `--notify` logs and
   continues, `--notify-confirm` resolves the pending prompt `false` with a

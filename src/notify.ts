@@ -34,6 +34,8 @@ export type ExecFileFn = (file: string, args: readonly string[]) => Promise<Exec
 export interface NotifyPayload {
   title: string;
   message: string;
+  /** terminal-notifier `-group`: defaults to GROUP_ID (shared) when omitted. */
+  group?: string | undefined;
 }
 
 export interface NotifyConfirmerOptions extends NotifyPayload {
@@ -114,11 +116,32 @@ function focusSuffixedLabel(
   return phase === 'focus' ? `${label} ${focusCounter(config, focusCount)}` : label;
 }
 
+/**
+ * Validate a custom `--notify-group` id. Shared rule so overlapping timers
+ * can isolate their toasts: trimmed, non-empty, at most 64 chars, no
+ * control characters (same control set as phase names).
+ */
+export function parseNotifyGroup(raw: string, flag = '--notify-group'): string {
+  if (raw.includes('\r') || raw.includes('\n') || raw.includes('\t') || raw.includes('\u0007')) {
+    throw new Error(
+      `invalid ${flag} ${JSON.stringify(raw)}: group must not contain control characters (\\r \\n \\t \\x07)`,
+    );
+  }
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    throw new Error(`invalid ${flag} ${JSON.stringify(raw)}: group must not be empty`);
+  }
+  if ([...trimmed].length > 64) {
+    throw new Error(`invalid ${flag} ${JSON.stringify(raw)}: group must be at most 64 characters`);
+  }
+  return trimmed;
+}
+
 /** Shared `-group`/`-sound`/`-title`/`-message` argv (blocking adds `-action`). */
-function baseArgv(title: string, message: string): string[] {
+function baseArgv(title: string, message: string, group: string = GROUP_ID): string[] {
   return [
     '-group',
-    GROUP_ID,
+    group,
     '-sound',
     SOUND,
     '-title',
@@ -196,7 +219,7 @@ export async function sendNotification(
   opts: NotifyPayload,
 ): Promise<void> {
   try {
-    await exec(NOTIFIER_BIN, baseArgv(opts.title, opts.message));
+    await exec(NOTIFIER_BIN, baseArgv(opts.title, opts.message, opts.group ?? GROUP_ID));
   } catch (err) {
     // Non-fatal by design (004 D4): a missed toast must not kill a focus.
     process.stderr.write(
@@ -215,7 +238,7 @@ export function createNotificationConfirmer(
   exec: ExecFileFn = defaultExec,
   opts: NotifyConfirmerOptions,
 ): (message: string) => Promise<boolean> {
-  const argv = [...baseArgv(opts.title, opts.message), '-action', NO_LABEL];
+  const argv = [...baseArgv(opts.title, opts.message, opts.group ?? GROUP_ID), '-action', NO_LABEL];
   const isFinished = opts.isFinished;
   const consumeResendRequest = opts.consumeResendRequest;
   return async (_message: string): Promise<boolean> => {
