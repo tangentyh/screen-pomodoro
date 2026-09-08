@@ -15,8 +15,11 @@ import {
   buildNotifyConfirmMessage,
   buildNotifyConfirmTitle,
   buildNotifyMessage,
+  buildNotifyStartMessage,
+  buildNotifyStartTitle,
   buildNotifyTitle,
   createNotificationConfirmer,
+  createNotificationStartChooser,
   sendNotification,
   type ExecFileFn,
 } from './notify.js';
@@ -287,15 +290,38 @@ export function startDriver(
 
   /**
    * Resolve the starting phase. An explicit `--start` always wins; without
-   * one, stdin `--confirm` asks once at startup (empty = Focus) so any
-   * phase can open the run without a flag. `--notify-confirm` never asks —
-   * a binary toast cannot offer three phases — and starts in focus.
+   * one, a confirm gate asks once at startup (stdin `--confirm`: empty =
+   * Focus; `--notify-confirm`: blocking 3-action toast, click = Focus) so
+   * any phase can open the run without a flag. No gate starts in focus.
    * Returns `undefined` when SIGINT/EOF aborts the menu (the SIGINT path
    * already printed the summary and settled the driver).
    */
   async function resolveInitialPhase(): Promise<Phase | undefined> {
     if (flags.startPhase !== undefined) return flags.startPhase;
-    if (!flags.confirm || useNotifyConfirm) return 'focus';
+    if (!gating) return 'focus';
+    if (useNotifyConfirm) {
+      confirmPending = true;
+      try {
+        if (finished) return undefined;
+        // Single bell before the first toast only (transition parity);
+        // re-sends after @CLOSED/@TIMEOUT stay silent.
+        process.stdout.write('\x07');
+        const title = buildNotifyStartTitle();
+        const message = buildNotifyStartMessage(config, names);
+        const chooser = createNotificationStartChooser(notifyExec, {
+          title,
+          message,
+          group: flags.notifyGroup,
+          names,
+          isFinished: () => finished,
+        });
+        const chosen = await chooser(message);
+        if (finished || chosen === undefined) return undefined;
+        return chosen;
+      } finally {
+        if (!finished) confirmPending = false;
+      }
+    }
     confirmPending = true;
     try {
       let first = true;

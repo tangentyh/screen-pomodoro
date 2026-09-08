@@ -53,7 +53,7 @@ Options:
   --long <duration>    Long break duration (minutes or with s/m/h suffix). (default: "15")
   --cycles <n>         Focuses per long break (integer >= 1). Loops forever unless --no-loop is given. (default: "4")
   --no-loop            Stop after the first long break (with the default start, after --cycles focuses) instead of looping forever.
-  --start <phase>      Starting phase: focus, short, or long (aliases short-break, long-break). With --confirm, omit to choose at startup.
+  --start <phase>      Starting phase: focus, short, or long (aliases short-break, long-break). With --confirm/--notify-confirm, omit to choose at startup.
   -q, --quiet          Log transitions only, no live countdown.
   --timestamp          Prefix history lines with the current time ([HH:MM:SS]).
   --confirm            Awaits y/n on each phase transition (requires interactive stdin).
@@ -92,9 +92,12 @@ forever (`--cycles 2 --no-loop` runs 2 focuses then exits).
 (`Choose starting phase: 1) Focus 2) Short break 3) Long break [1]` —
 `1`/`2`/`3`, `f`/`s`/`l`, names, or empty for Focus; anything else re-asks)
 and then gates each transition as usual, so opening on a break flows into
-the first focus via `Short break complete. Start Focus? [y/n]`. An explicit
-`--start` skips the question. `--notify-confirm` never asks (a binary toast
-cannot offer three phases) and starts in focus unless `--start` is given.
+the first focus via `Short break complete. Start Focus? [y/n]`. With
+`--notify-confirm` and no `--start`, the timer shows one toast with three
+actions (the phase labels, custom-name aware) instead — click a button to
+start there, click the body for Focus; dismissing re-sends until answered.
+An explicit
+`--start` skips the question under either gate.
 Without a gate the timer just auto-flows from the start phase;
 `--no-loop --start long` runs one long break then exits.
 
@@ -125,7 +128,8 @@ Click = yes, No = restart`). Click the body for yes, the `No` button for
   no. Dismissing the toast re-sends it until answered (same group, no
   stacking) — the toast equivalent of invalid stdin input. A prompt owed
   across a screen lock is likewise re-sent on unlock, so the click still
-  counts exactly once.
+  counts exactly once. Without `--start`, one startup toast offers the
+  three phases first (click = Focus) before the first phase line.
 - `--notify-confirm` cannot be combined with `--confirm` or `--notify`
   (one source only), and unlike `--confirm` it works without a TTY.
 - Overlapping timers: by default all timers share one group, so the second

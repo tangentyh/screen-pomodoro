@@ -7,6 +7,7 @@
  * `defineProperty(process.stdout/stdin, 'isTTY')`. Never blocks on real
  * stdin — `node:readline` is stubbed per-test.
  */
+import * as childProcess from 'node:child_process';
 import * as readline from 'node:readline';
 import type * as readlineTypes from 'node:readline';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -18,6 +19,108 @@ vi.mock('node:readline', async (importOriginal) => {
   const actual = await importOriginal<typeof readlineTypes>();
   return { ...actual, createInterface: vi.fn() };
 });
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof childProcess>();
+  return { ...actual, execFile: vi.fn() };
+});
+
+function mockedExecFile(): ReturnType<typeof vi.fn> {
+  return vi.mocked(childProcess.execFile);
+}
+
+const originalPlatform = process.platform;
+
+function setPlatform(value: typeof process.platform): void {
+  Object.defineProperty(process, 'platform', {
+    value,
+    configurable: true,
+    writable: false,
+    enumerable: true,
+  });
+}
+
+type ExecCallback = (
+  err: (Error & { code?: unknown }) | null,
+  stdout?: string,
+  stderr?: string,
+) => void;
+
+function callbackOf(args: readonly unknown[]): ExecCallback {
+  const found = [...args].reverse().find((a) => typeof a === 'function');
+  if (found === undefined) throw new Error('execFile called without a callback');
+  return found as ExecCallback;
+}
+
+/** Binary present: `-version` ok, chooser `-action` answers from queue. */
+function mockNotifierAvailable(answers: (string | Error)[] = []): void {
+  const queue = [...answers];
+  mockedExecFile().mockImplementation((...callArgs: unknown[]) => {
+    const [, rawArgs, ...rest] = callArgs as [unknown, string[], ...unknown[]];
+    const argv = [...rawArgs];
+    const cb = callbackOf(rest);
+    if (argv.includes('-version')) {
+      queueMicrotask(() => cb(null, '3.1.0', ''));
+      return {};
+    }
+    if (argv.includes('-action')) {
+      const next = queue.length > 0 ? queue.shift()! : '@ACTIONCLICKED';
+      if (next instanceof Error) queueMicrotask(() => cb(next));
+      else queueMicrotask(() => cb(null, next, ''));
+      return {};
+    }
+    queueMicrotask(() => cb(null, '', ''));
+    return {};
+  });
+}
+
+/** Manual chooser answers with a killable child (SIGINT-kill observable). */
+function mockNotifierManual(): {
+  answerNext: (stdout: string) => void;
+  chooserCalls: () => number;
+  chooserArgvs: string[][];
+} {
+  const chooserArgvs: string[][] = [];
+  const pending: ExecCallback[] = [];
+  mockedExecFile().mockImplementation((...callArgs: unknown[]) => {
+    const [, rawArgs, ...rest] = callArgs as [unknown, string[], ...unknown[]];
+    const argv = [...rawArgs];
+    const cb = callbackOf(rest);
+    if (argv.includes('-version')) {
+      queueMicrotask(() => cb(null, '3.1.0', ''));
+      return {};
+    }
+    if (argv.includes('-action')) {
+      chooserArgvs.push(argv);
+      pending.push(cb);
+      return {
+        kill: (): void => {
+          const idx = pending.indexOf(cb);
+          if (idx >= 0) {
+            pending.splice(idx, 1);
+            cb(
+              Object.assign(new Error('Command failed: terminal-notifier'), { signal: 'SIGTERM' }),
+            );
+          }
+        },
+      };
+    }
+    queueMicrotask(() => cb(null, '', ''));
+    return {};
+  });
+  return {
+    chooserArgvs,
+    answerNext: (stdout: string): void => {
+      const cb = pending.shift();
+      if (cb) cb(null, stdout, '');
+    },
+    chooserCalls: (): number => chooserArgvs.length,
+  };
+}
+
+function allExecArgvs(): string[][] {
+  return mockedExecFile().mock.calls.map((call) => call[1] as string[]);
+}
 
 function mockedCreateInterface(): ReturnType<typeof vi.fn> {
   return vi.mocked(readline.createInterface);
@@ -149,6 +252,8 @@ describe('--start CLI', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     mockedCreateInterface().mockClear();
+    mockedExecFile().mockClear();
+    setPlatform(originalPlatform);
     vi.useRealTimers();
     if (originalStdoutIsTTY === undefined) delete (process.stdout as { isTTY?: unknown }).isTTY;
     else
@@ -364,6 +469,8 @@ describe('startup menu (--confirm without --start)', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     mockedCreateInterface().mockClear();
+    mockedExecFile().mockClear();
+    setPlatform(originalPlatform);
     vi.useRealTimers();
     if (originalStdoutIsTTY === undefined) delete (process.stdout as { isTTY?: unknown }).isTTY;
     else
@@ -559,6 +666,196 @@ describe('startup menu (--confirm without --start)', () => {
     expect(rl.prompts[0]).toMatch(/^\[\d\d:\d\d:\d\d\] Choose starting phase/);
     process.emit('SIGINT');
     await expect(runPromise).resolves.toBe(0);
+  });
+});
+
+describe('startup menu (--notify-confirm without --start)', () => {
+  let sigintBaseline = 0;
+
+  beforeEach(() => {
+    sigintBaseline = process.listenerCount('SIGINT');
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    mockedCreateInterface().mockClear();
+    mockedExecFile().mockClear();
+    setPlatform(originalPlatform);
+    vi.useRealTimers();
+    if (originalStdoutIsTTY === undefined) delete (process.stdout as { isTTY?: unknown }).isTTY;
+    else
+      Object.defineProperty(process.stdout, 'isTTY', {
+        value: originalStdoutIsTTY,
+        configurable: true,
+        writable: true,
+      });
+    if (originalStdinIsTTY === undefined) delete (process.stdin as { isTTY?: unknown }).isTTY;
+    else
+      Object.defineProperty(process.stdin, 'isTTY', {
+        value: originalStdinIsTTY,
+        configurable: true,
+        writable: true,
+      });
+  });
+
+  it('button title starts that phase (no Focus line first, one bell)', async () => {
+    vi.useFakeTimers();
+    setPlatform('darwin');
+    mockNotifierAvailable(['Short break']);
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const runPromise = run([
+      '--focus',
+      '5m',
+      '--short',
+      '5m',
+      '--long',
+      '5m',
+      '--quiet',
+      '--notify-confirm',
+    ]);
+    await advance(0);
+    const text = stdoutText(out);
+    expect(text).toContain('Short break');
+    expect(text).not.toContain('Focus');
+    expect(countBells(text)).toBe(1);
+    // Toast menu never touches stdin readline.
+    expect(mockedCreateInterface()).not.toHaveBeenCalled();
+    process.emit('SIGINT');
+    await expect(runPromise).resolves.toBe(0);
+    expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
+  });
+
+  it('@ACTIONCLICKED (body click) starts focus (click = Focus)', async () => {
+    vi.useFakeTimers();
+    setPlatform('darwin');
+    mockNotifierAvailable(['@ACTIONCLICKED']);
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const runPromise = run(['--focus', '5m', '--short', '5m', '--quiet', '--notify-confirm']);
+    await advance(0);
+    expect(stdoutText(out)).toContain('Focus 1/4');
+    process.emit('SIGINT');
+    await expect(runPromise).resolves.toBe(0);
+  });
+
+  it('@CLOSED/@TIMEOUT re-send the same toast (same argv/group)', async () => {
+    vi.useFakeTimers();
+    setPlatform('darwin');
+    mockNotifierAvailable(['@CLOSED', '@TIMEOUT', 'Long break']);
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const runPromise = run([
+      '--focus',
+      '5m',
+      '--short',
+      '5m',
+      '--long',
+      '5m',
+      '--quiet',
+      '--notify-confirm',
+    ]);
+    await advance(0);
+    expect(stdoutText(out)).toContain('Long break');
+    const choosers = allExecArgvs().filter((argv) => argv.includes('Choose starting phase'));
+    expect(choosers).toHaveLength(3);
+    expect(choosers[1]).toEqual(choosers[0]);
+    expect(choosers[2]).toEqual(choosers[0]);
+    // One bell for the menu; re-sends stay silent.
+    expect(countBells(stdoutText(out))).toBe(1);
+    process.emit('SIGINT');
+    await expect(runPromise).resolves.toBe(0);
+  });
+
+  it('spawn error / unexpected output fall back to focus + stderr note (never spins)', async () => {
+    vi.useFakeTimers();
+    setPlatform('darwin');
+    mockNotifierAvailable([
+      Object.assign(new Error('spawn terminal-notifier ENOENT'), { code: 'ENOENT' }),
+    ]);
+    const errOut = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const runPromise = run(['--focus', '5m', '--short', '5m', '--quiet', '--notify-confirm']);
+    await advance(0);
+    expect(stdoutText(out)).toContain('Focus 1/4');
+    expect(stderrText(errOut)).toMatch(/terminal-notifier/);
+    process.emit('SIGINT');
+    await expect(runPromise).resolves.toBe(0);
+  });
+
+  it('unexpected output falls back to focus + stderr note', async () => {
+    vi.useFakeTimers();
+    setPlatform('darwin');
+    mockNotifierAvailable(['bogus']);
+    const errOut = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const runPromise = run(['--focus', '5m', '--short', '5m', '--quiet', '--notify-confirm']);
+    await advance(0);
+    expect(stdoutText(out)).toContain('Focus 1/4');
+    expect(stderrText(errOut)).toMatch(/terminal-notifier|unexpected/i);
+    process.emit('SIGINT');
+    await expect(runPromise).resolves.toBe(0);
+  });
+
+  it('custom labels ride as toast actions and resolve', async () => {
+    vi.useFakeTimers();
+    setPlatform('darwin');
+    mockNotifierAvailable(['Coffee']);
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const runPromise = run([
+      '--focus',
+      '5m',
+      '--short',
+      '5m',
+      '--short-name',
+      'Coffee',
+      '--quiet',
+      '--notify-confirm',
+    ]);
+    await advance(0);
+    expect(stdoutText(out)).toContain('Coffee');
+    const choosers = allExecArgvs().filter((argv) => argv.includes('Choose starting phase'));
+    expect(choosers).toHaveLength(1);
+    const actions = choosers[0]!.filter((_, i) => choosers[0]![i - 1] === '-action');
+    expect(actions).toEqual(['Focus', 'Coffee', 'Long break']);
+    process.emit('SIGINT');
+    await expect(runPromise).resolves.toBe(0);
+  });
+
+  it('explicit --start skips the toast (exec lazy except the version probe)', async () => {
+    vi.useFakeTimers();
+    setPlatform('darwin');
+    mockNotifierAvailable();
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const runPromise = run([
+      '--focus',
+      '5m',
+      '--short',
+      '5m',
+      '--quiet',
+      '--notify-confirm',
+      '--start',
+      'short',
+    ]);
+    await advance(0);
+    expect(stdoutText(out)).toContain('Short break');
+    const choosers = allExecArgvs().filter((argv) => argv.includes('Choose starting phase'));
+    expect(choosers).toHaveLength(0);
+    process.emit('SIGINT');
+    await expect(runPromise).resolves.toBe(0);
+  });
+
+  it('SIGINT during the toast menu kills the child, prints the summary, exits 0', async () => {
+    vi.useFakeTimers();
+    setPlatform('darwin');
+    const manual = mockNotifierManual();
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const runPromise = run(['--focus', '5m', '--short', '5m', '--quiet', '--notify-confirm']);
+    await advance(0);
+    expect(manual.chooserCalls()).toBe(1);
+    process.emit('SIGINT');
+    await expect(runPromise).resolves.toBe(0);
+    expect(stdoutText(out)).toMatch(/Completed 0 focuses/);
+    // Nothing started behind the menu: no phase line.
+    expect(stdoutText(out)).not.toContain('remaining');
+    expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
   });
 });
 

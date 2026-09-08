@@ -518,6 +518,9 @@ describe('004 step 2 — --notify fire-and-forget (no gating change)', () => {
       '--notify-confirm',
       '--notify-group',
       'stretch',
+      // 009: pin --start focus so the startup toast menu is skipped.
+      '--start',
+      'focus',
     ]);
     await advance(0);
     await advance(1_200);
@@ -563,6 +566,9 @@ describe('004 step 2 — --notify-confirm blocking gate', () => {
       '4',
       '--quiet',
       '--notify-confirm',
+      // 009: pin --start focus so the startup toast menu is skipped.
+      '--start',
+      'focus',
     ]);
     await advance(0);
     expect(stdoutText(out)).toContain('Focus 1/4');
@@ -603,6 +609,9 @@ describe('004 step 2 — --notify-confirm blocking gate', () => {
       '4',
       '--quiet',
       '--notify-confirm',
+      // 009: pin --start focus so the startup toast menu is skipped.
+      '--start',
+      'focus',
     ]);
     await advance(0);
     await advance(2_200);
@@ -637,6 +646,9 @@ describe('004 step 2 — --notify-confirm blocking gate', () => {
       '60s',
       '--quiet',
       '--notify-confirm',
+      // 009: pin --start focus so the startup toast menu is skipped.
+      '--start',
+      'focus',
     ]);
     await advance(0);
     await advance(1_200);
@@ -667,6 +679,9 @@ describe('004 step 2 — --notify-confirm blocking gate', () => {
       '60s',
       '--quiet',
       '--notify-confirm',
+      // 009: pin --start focus so the startup toast menu is skipped.
+      '--start',
+      'focus',
     ]);
     await advance(0);
     await advance(1_200);
@@ -701,6 +716,9 @@ describe('004 step 2 — --notify-confirm blocking gate', () => {
       '--quiet',
       '--no-loop',
       '--notify-confirm',
+      // 009: pin --start focus so the startup toast menu is skipped.
+      '--start',
+      'focus',
     ]);
     await advance(0);
     await advance(1_200);
@@ -882,6 +900,9 @@ describe('notify + screen lock — no toast fires while locked', () => {
         '4',
         '--quiet',
         '--notify-confirm',
+        // 009: pin --start focus so the startup toast menu is skipped.
+        '--start',
+        'focus',
       ],
       { monitor: stub },
     );

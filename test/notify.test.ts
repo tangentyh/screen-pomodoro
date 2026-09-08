@@ -26,9 +26,12 @@ import {
   buildNotifyConfirmMessage,
   buildNotifyConfirmTitle,
   buildNotifyMessage,
+  buildNotifyStartMessage,
+  buildNotifyStartTitle,
   buildNotifyTitle,
   checkNotifierAvailable,
   createNotificationConfirmer,
+  createNotificationStartChooser,
   escapeNotifierMessage,
   GROUP_ID,
   isNotifySupported,
@@ -552,5 +555,159 @@ describe('004 — module constraints (D1 driver-only, D5 execFile-only)', () => 
     const source = fs.readFileSync(new URL('../src/notify.ts', import.meta.url), 'utf8');
     expect(source).not.toMatch(/from\s+['"]\.\/timer\.js['"]/);
     expect(source).toMatch(/execFile/);
+  });
+});
+
+describe('009 — buildNotifyStartTitle/Message (startup toast menu)', () => {
+  it('title is `Choose starting phase`', () => {
+    expect(buildNotifyStartTitle()).toBe('Choose starting phase');
+  });
+
+  it('default names: `Start Focus — 25:00, Short break — 5:00, or Long break — 15:00? Click = Focus`', () => {
+    expect(buildNotifyStartMessage(CONFIG, DEFAULT_PHASE_NAMES)).toBe(
+      'Start Focus — 25:00, Short break — 5:00, or Long break — 15:00? Click = Focus',
+    );
+  });
+
+  it('custom labels verbatim (bare, no counter)', () => {
+    expect(buildNotifyStartMessage(CONFIG, CUSTOM)).toBe(
+      'Start Deep work — 25:00, Coffee — 5:00, or Lunch — 15:00? Click = Deep work',
+    );
+  });
+
+  it('durations are nominal config clocks (pause/gating never inflate)', () => {
+    const tiny: PomodoroConfig = {
+      focusMs: 60_000,
+      shortBreakMs: 1_000,
+      longBreakMs: 60_000,
+      cycles: 4,
+    };
+    expect(buildNotifyStartMessage(tiny, DEFAULT_PHASE_NAMES)).toBe(
+      'Start Focus — 1:00, Short break — 0:01, or Long break — 1:00? Click = Focus',
+    );
+  });
+});
+
+describe('009 — createNotificationStartChooser mapping', () => {
+  type StartPhase = 'focus' | 'shortBreak' | 'longBreak';
+  function chooserWith(
+    outputs: (string | Error)[],
+    opts?: {
+      title?: string;
+      message?: string;
+      group?: string;
+      names?: PhaseNames;
+      isFinished?: () => boolean;
+    },
+  ): { exec: ReturnType<typeof vi.fn>; choose: (msg: string) => Promise<StartPhase | undefined> } {
+    const queue = [...outputs];
+    const exec = vi.fn(async (_file: string, _args: readonly string[]): Promise<ExecResult> => {
+      const next = queue.shift();
+      if (next instanceof Error) throw next;
+      return { stdout: next ?? '', stderr: '' };
+    });
+    const choose = createNotificationStartChooser(exec, {
+      title: opts?.title ?? 'Choose starting phase',
+      message:
+        opts?.message ??
+        'Start Focus — 25:00, Short break — 5:00, or Long break — 15:00? Click = Focus',
+      group: opts?.group,
+      names: opts?.names,
+      isFinished: opts?.isFinished,
+    });
+    return { exec, choose };
+  }
+
+  it('button title → phase (bare labels, trimmed, case-insensitive)', async () => {
+    const { choose: f } = chooserWith(['Focus']);
+    await expect(f('ignored')).resolves.toBe('focus');
+    const { choose: s } = chooserWith(['  Short break  ']);
+    await expect(s('ignored')).resolves.toBe('shortBreak');
+    const { choose: l } = chooserWith(['LONG BREAK']);
+    await expect(l('ignored')).resolves.toBe('longBreak');
+  });
+
+  it('parses via parseStartChoice: digits/letters and --start words', async () => {
+    const { choose: two } = chooserWith(['2']);
+    await expect(two('ignored')).resolves.toBe('shortBreak');
+    const { choose: word } = chooserWith(['short-break']);
+    await expect(word('ignored')).resolves.toBe('shortBreak');
+  });
+
+  it('custom labels resolve as actions', async () => {
+    const { choose } = chooserWith(['Coffee'], { names: CUSTOM });
+    await expect(choose('ignored')).resolves.toBe('shortBreak');
+  });
+
+  it('@ACTIONCLICKED (body click) → focus (stdin empty = Focus parity)', async () => {
+    const { choose } = chooserWith(['@ACTIONCLICKED']);
+    await expect(choose('ignored')).resolves.toBe('focus');
+  });
+
+  it('@CLOSED → re-sends the same toast (same argv/group, replaces in place)', async () => {
+    const { exec, choose } = chooserWith(['@CLOSED', 'Short break']);
+    await expect(choose('ignored')).resolves.toBe('shortBreak');
+    expect(exec).toHaveBeenCalledTimes(2);
+    const first = exec.mock.calls[0]?.[1] as string[];
+    const second = exec.mock.calls[1]?.[1] as string[];
+    expect(second).toEqual(first);
+    expect(first).toContain('-group');
+    expect(first).toContain(GROUP_ID);
+  });
+
+  it('@TIMEOUT → re-sends', async () => {
+    const { exec, choose } = chooserWith(['@TIMEOUT', '@ACTIONCLICKED']);
+    await expect(choose('ignored')).resolves.toBe('focus');
+    expect(exec).toHaveBeenCalledTimes(2);
+  });
+
+  it('spawn error → focus + stderr note (fallback to the old default, never spins)', async () => {
+    const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const vanished = Object.assign(new Error('spawn terminal-notifier ENOENT'), { code: 'ENOENT' });
+    const { exec, choose } = chooserWith([vanished]);
+    await expect(choose('ignored')).resolves.toBe('focus');
+    expect(exec).toHaveBeenCalledTimes(1);
+    expect(errSpy).toHaveBeenCalled();
+  });
+
+  it('unexpected output → focus + stderr note', async () => {
+    const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const { choose } = chooserWith(['bogus']);
+    await expect(choose('ignored')).resolves.toBe('focus');
+    expect(errSpy).toHaveBeenCalled();
+  });
+
+  it('isFinished → undefined without spawning (SIGINT abort parity)', async () => {
+    const exec = vi.fn(async (): Promise<ExecResult> => ({ stdout: 'Focus', stderr: '' }));
+    const choose = createNotificationStartChooser(exec, {
+      title: 't',
+      message: 'm',
+      isFinished: () => true,
+    });
+    await expect(choose('ignored')).resolves.toBeUndefined();
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it('argv uses repeated -action (not comma-joined) with bare custom labels', async () => {
+    const { exec, choose } = chooserWith(['Coffee'], { names: CUSTOM });
+    await choose('ignored');
+    expect(exec.mock.calls[0]?.[0]).toBe('terminal-notifier');
+    const argv = exec.mock.calls[0]?.[1] as string[];
+    expect(argv).toContain('-group');
+    expect(argv).toContain(GROUP_ID);
+    expect(argv).toContain('-sound');
+    expect(argv).toContain(SOUND);
+    expect(argv[argv.indexOf('-title') + 1]).toBe('Choose starting phase');
+    // Repeated -action entries, one per phase, verbatim (no comma-join).
+    const actions = argv.filter((_, i) => argv[i - 1] === '-action');
+    expect(actions).toEqual(['Deep work', 'Coffee', 'Lunch']);
+    expect(argv.join('\x00')).not.toMatch(/Deep work,Coffee/);
+  });
+
+  it('custom --notify-group carries into the chooser toast', async () => {
+    const { exec, choose } = chooserWith(['Focus'], { group: 'work' });
+    await expect(choose('ignored')).resolves.toBe('focus');
+    const argv = exec.mock.calls[0]?.[1] as unknown as string[];
+    expect(argv[argv.indexOf('-group') + 1]).toBe('work');
   });
 });

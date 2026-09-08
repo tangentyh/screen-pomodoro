@@ -13,7 +13,13 @@
  */
 import { execFile as execFileCallback } from 'node:child_process';
 import { promisify } from 'node:util';
-import { formatClock, phaseLabel, type PhaseNames } from './display.js';
+import {
+  DEFAULT_PHASE_NAMES,
+  formatClock,
+  parseStartChoice,
+  phaseLabel,
+  type PhaseNames,
+} from './display.js';
 
 export const GROUP_ID = 'screen-pomodoro';
 export const SOUND = 'Bottle';
@@ -269,6 +275,86 @@ export function createNotificationConfirmer(
       if (raw === '@CLOSED' || raw === '@TIMEOUT') continue;
       process.stderr.write(`unexpected terminal-notifier output: ${JSON.stringify(raw)}\n`);
       return false;
+    }
+  };
+}
+
+/** Startup-menu toast copy (009): `Choose starting phase` + 3-way proposal. */
+export function buildNotifyStartTitle(): string {
+  return 'Choose starting phase';
+}
+
+export function buildNotifyStartMessage(config: NotifyConfig, names: PhaseNames): string {
+  const focusDur = formatClock(notifyDurationMs(config, 'focus'));
+  const shortDur = formatClock(notifyDurationMs(config, 'shortBreak'));
+  const longDur = formatClock(notifyDurationMs(config, 'longBreak'));
+  return (
+    `Start ${phaseLabel('focus', names)} — ${focusDur}, ` +
+    `${phaseLabel('shortBreak', names)} — ${shortDur}, ` +
+    `or ${phaseLabel('longBreak', names)} — ${longDur}? ` +
+    `Click = ${phaseLabel('focus', names)}`
+  );
+}
+
+export interface NotifyStartChooserOptions {
+  title: string;
+  message: string;
+  group?: string | undefined;
+  names?: PhaseNames | undefined;
+  isFinished?: (() => boolean) | undefined;
+}
+
+/**
+ * Blocking 3-way startup chooser for `--notify-confirm` without `--start`
+ * (009 menu parity with the stdin asker). One toast with three `-action`
+ * buttons (bare labels, repeated `-action` — never comma-joined; several
+ * actions collapse into an Options menu on macOS and the outcome prints on
+ * stdout). Mapping (trimmed): button title → `parseStartChoice` (same
+ * collision order as stdin); `@ACTIONCLICKED` (body click) → focus;
+ * `@CLOSED`/`@TIMEOUT` → re-send the same toast (same `-group`, replaces in
+ * place); anything else / spawn error → focus + stderr note (fallback to the
+ * old default, never spins); `isFinished` → `undefined` (SIGINT abort).
+ *
+ * Known limit: a comma inside a custom phase name splits into extra buttons
+ * (`terminal-notifier` comma-splits every `-action` value with no escaping).
+ */
+export function createNotificationStartChooser(
+  exec: ExecFileFn = defaultExec,
+  opts: NotifyStartChooserOptions,
+): (message: string) => Promise<NotifyPhase | undefined> {
+  const names = opts.names ?? DEFAULT_PHASE_NAMES;
+  const argv = [
+    ...baseArgv(opts.title, opts.message, opts.group ?? GROUP_ID),
+    '-action',
+    phaseLabel('focus', names),
+    '-action',
+    phaseLabel('shortBreak', names),
+    '-action',
+    phaseLabel('longBreak', names),
+  ];
+  const isFinished = opts.isFinished;
+  return async (_message: string): Promise<NotifyPhase | undefined> => {
+    if (isFinished?.() === true) return undefined;
+    for (;;) {
+      if (isFinished?.() === true) return undefined;
+      let raw: string;
+      try {
+        const result = await exec(NOTIFIER_BIN, argv);
+        raw = result.stdout.trim();
+      } catch (err) {
+        if (isFinished?.() === true) return undefined;
+        process.stderr.write(
+          `terminal-notifier confirm failed: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+        return 'focus';
+      }
+      if (isFinished?.() === true) return undefined;
+      if (raw === '@ACTIONCLICKED') return 'focus';
+      if (raw === '@CLOSED' || raw === '@TIMEOUT') continue;
+      const parsed = parseStartChoice(raw, names);
+      if (parsed !== undefined) return parsed;
+      process.stderr.write(`unexpected terminal-notifier output: ${JSON.stringify(raw)}\n`);
+      return 'focus';
     }
   };
 }

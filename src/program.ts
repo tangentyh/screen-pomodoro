@@ -52,7 +52,7 @@ export function createProgram(monitorOverride?: ScreenMonitor): Command {
     )
     .option(
       '--start <phase>',
-      'Starting phase: focus, short, or long (aliases short-break, long-break). With --confirm, omit to choose at startup.',
+      'Starting phase: focus, short, or long (aliases short-break, long-break). With --confirm/--notify-confirm, omit to choose at startup.',
     )
     .option('-q, --quiet', 'Log transitions only, no live countdown.')
     .option('--timestamp', 'Prefix history lines with the current time ([HH:MM:SS]).')
