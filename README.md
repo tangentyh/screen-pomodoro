@@ -59,8 +59,9 @@ Options:
   --confirm            Awaits y/n on each phase transition (requires interactive stdin).
   --notify             Send a macOS notification on each phase transition (macOS + terminal-notifier required).
   --notify-confirm     Answer phase transitions by clicking the notification (click = yes, No = no). Implies the confirm gate; does not require interactive stdin.
-  --notify-group <id>  Notification group for overlapping timers (default shares one toast).
   --no-screen-pause    Do not pause when the screen locks.
+  --no-bell            Disable the terminal bell (\x07) on phase changes and prompts.
+  --notify-group <id>  Notification group for overlapping timers (default shares one toast).
   --focus-name <name>  Custom label for focus phases. (default: "Focus")
   --short-name <name>  Custom label for short breaks. (default: "Short break")
   --long-name <name>   Custom label for long breaks. (default: "Long break")
@@ -72,7 +73,7 @@ and summary (`--focus-name "Deep work"` → `Deep work 1/4`,
 `Completed 3 Deep work`). Names must be non-empty after trimming, at most 40
 characters, with no control characters.
 
-With `--confirm`, each deadline rings once and asks:
+With `--confirm`, each deadline rings once (unless `--no-bell`) and asks:
 
 ```
 Deep work complete. Start Coffee? [y/n] y
@@ -119,6 +120,7 @@ brew install terminal-notifier
 
 - `--notify` sends one fire-and-forget toast per transition (startup included)
   alongside the usual bell + phase line, in both live and quiet modes.
+  Pass `--no-bell` for toast + sound only (single chime instead of two).
   A missed toast never kills the timer (one stderr note, then bell+text).
   Nothing fires while the screen is locked (skipped, not queued — the next
   entry replaces in place), and locking withdraws the visible toast.

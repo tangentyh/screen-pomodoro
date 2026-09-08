@@ -20,6 +20,7 @@ interface PomodoroOptions {
   notifyConfirm: boolean;
   notifyGroup?: string | undefined;
   screenPause: boolean;
+  bell: boolean;
   focusName: string;
   shortName: string;
   longName: string;
@@ -66,6 +67,7 @@ export function createProgram(monitorOverride?: ScreenMonitor): Command {
       'Answer phase transitions by clicking the notification (click = yes, No = no). Implies the confirm gate; does not require interactive stdin.',
     )
     .option('--no-screen-pause', 'Do not pause when the screen locks.')
+    .option('--no-bell', 'Disable the terminal bell (\\x07) on phase changes and prompts.')
     .option(
       '--notify-group <id>',
       'Notification group for overlapping timers (default shares one toast).',
@@ -168,6 +170,7 @@ export function createProgram(monitorOverride?: ScreenMonitor): Command {
         notifyConfirm,
         notifyGroup,
         screenPause: raw.screenPause ?? true,
+        bell: raw.bell ?? true,
         startPhase,
       },
       monitorOverride,

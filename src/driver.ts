@@ -40,6 +40,8 @@ export interface DriverFlags {
   notifyConfirm: boolean;
   notifyGroup: string;
   screenPause: boolean;
+  /** `--no-bell` silences every `\x07` (010); default rings. */
+  bell: boolean;
   /**
    * Explicit `--start` phase. When omitted, stdin `--confirm` asks once at
    * startup (default focus); every other mode starts in focus.
@@ -94,6 +96,11 @@ export function startDriver(
   const useNotify = flags.notify;
   const useNotifyConfirm = flags.notifyConfirm;
   const gating = flags.confirm || useNotifyConfirm;
+  const bellEnabled = flags.bell ?? true;
+  const bellPrefix = bellEnabled ? '\x07' : '';
+  function ring(): void {
+    if (bellEnabled) process.stdout.write('\x07');
+  }
 
   /**
    * Prefix a history line with `[HH:MM:SS]` when `--timestamp` is set.
@@ -305,7 +312,7 @@ export function startDriver(
         if (finished) return undefined;
         // Single bell before the first toast only (transition parity);
         // re-sends after @CLOSED/@TIMEOUT stay silent.
-        process.stdout.write('\x07');
+        ring();
         const title = buildNotifyStartTitle();
         const message = buildNotifyStartMessage(config, names);
         const chooser = createNotificationStartChooser(notifyExec, {
@@ -330,7 +337,7 @@ export function startDriver(
         if (first) {
           // Single bell before the first prompt only (transition parity);
           // re-prompts after invalid input stay silent.
-          process.stdout.write('\x07');
+          ring();
           first = false;
         }
         const promptAt = Date.now();
@@ -375,11 +382,11 @@ export function startDriver(
         const terminalAt = Date.now();
         if (flags.live) {
           process.stdout.write(
-            `\x07\r\x1b[K${stamp(buildSummaryLine(timer.focusCount, names), terminalAt)}\n`,
+            `${bellPrefix}\r\x1b[K${stamp(buildSummaryLine(timer.focusCount, names), terminalAt)}\n`,
           );
         } else {
           process.stdout.write(
-            `\x07${stamp(buildSummaryLine(timer.focusCount, names), terminalAt)}\n`,
+            `${bellPrefix}${stamp(buildSummaryLine(timer.focusCount, names), terminalAt)}\n`,
           );
         }
         finish();
@@ -392,7 +399,7 @@ export function startDriver(
       if (useNotifyConfirm) {
         const title = buildNotifyConfirmTitle(current, names);
         const message = buildNotifyConfirmMessage(current, next, config, names, timer.focusCount);
-        process.stdout.write('\x07');
+        ring();
         const confirmer = createNotificationConfirmer(notifyExec, {
           title,
           message,
@@ -407,7 +414,7 @@ export function startDriver(
         confirmed = await confirmer(message);
       } else {
         const promptMsg = `${phaseLabel(current, names)} complete. Start ${phaseLabel(next, names)}? [y/n] `;
-        process.stdout.write('\x07');
+        ring();
         confirmed = await confirmFn(stamp(promptMsg, promptAt));
       }
       if (finished) return;
@@ -556,13 +563,13 @@ export function startDriver(
         // Terminal long break: ring + summary only. Do not start (or notify)
         // the next focus — the timer exits instead of looping.
         process.stdout.write(
-          `\x07\r\x1b[K${stamp(buildSummaryLine(timer.focusCount, names), now)}\n`,
+          `${bellPrefix}\r\x1b[K${stamp(buildSummaryLine(timer.focusCount, names), now)}\n`,
         );
         finish();
         return;
       }
       process.stdout.write(
-        `\x07\r\x1b[K${stamp(buildPhaseLine(timer, config, names, now), now)}\n`,
+        `${bellPrefix}\r\x1b[K${stamp(buildPhaseLine(timer, config, names, now), now)}\n`,
       );
       notifyEntered(before, timer.phase);
       return;
@@ -604,11 +611,15 @@ export function startDriver(
       if (!flags.loop && before === 'longBreak' && timer.phase === 'focus') {
         // Terminal long break: ring + summary only (no next-focus line).
         // Quiet never owns a `\r` row, so no leading break (live commits).
-        process.stdout.write(`\x07${stamp(buildSummaryLine(timer.focusCount, names), now)}\n`);
+        process.stdout.write(
+          `${bellPrefix}${stamp(buildSummaryLine(timer.focusCount, names), now)}\n`,
+        );
         finish();
         return;
       }
-      process.stdout.write(`\x07${stamp(buildPhaseLine(timer, config, names, now), now)}\n`);
+      process.stdout.write(
+        `${bellPrefix}${stamp(buildPhaseLine(timer, config, names, now), now)}\n`,
+      );
       notifyEntered(before, timer.phase);
       armQuietTimeout();
       return;
