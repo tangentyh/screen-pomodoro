@@ -52,7 +52,7 @@ Options:
   --short <duration>   Short break duration (minutes or with s/m/h suffix). (default: "5")
   --long <duration>    Long break duration (minutes or with s/m/h suffix). (default: "15")
   --cycles <n>         Focuses per long break (integer >= 1). Loops forever unless --no-loop is given. (default: "4")
-  --no-loop            Stop after the first long break (i.e. after --cycles focuses) instead of looping forever.
+  --no-loop            Stop after the first long break (with the default start, after --cycles focuses) instead of looping forever.
   --start <phase>      Starting phase: focus, short, or long (aliases short-break, long-break). With --confirm, omit to choose at startup.
   -q, --quiet          Log transitions only, no live countdown.
   --timestamp          Prefix history lines with the current time ([HH:MM:SS]).

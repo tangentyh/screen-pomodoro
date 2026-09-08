@@ -48,7 +48,7 @@ export function createProgram(monitorOverride?: ScreenMonitor): Command {
     )
     .option(
       '--no-loop',
-      'Stop after the first long break (i.e. after --cycles focuses) instead of looping forever.',
+      'Stop after the first long break (with the default start, after --cycles focuses) instead of looping forever.',
     )
     .option(
       '--start <phase>',
