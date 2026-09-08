@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import pkg from '../package.json' with { type: 'json' };
 import { run } from '../src/cli.js';
 
 function outputOf(spy: { mock: { calls: (readonly unknown[])[] } }): string {
@@ -57,7 +58,7 @@ describe('cli', () => {
   it('prints the version and exits 0', async () => {
     const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     await expect(run(['--version'])).resolves.toBe(0);
-    expect(outputOf(out)).toContain('0.1.0');
+    expect(outputOf(out)).toContain(pkg.version);
   });
 
   it('exits 1 with a usage error for unknown options', async () => {

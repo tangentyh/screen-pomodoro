@@ -1,6 +1,6 @@
 {
   "name": "screen-pomodoro",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A tiny CLI pomodoro timer that pauses when your screen locks.",
   "type": "module",
   "license": "MIT",
