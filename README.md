@@ -53,6 +53,7 @@ Options:
   --long <duration>    Long break duration (minutes or with s/m/h suffix). (default: "15")
   --cycles <n>         Focuses per long break (integer >= 1). Loops forever unless --no-loop is given. (default: "4")
   --no-loop            Stop after the first long break (i.e. after --cycles focuses) instead of looping forever.
+  --start <phase>      Starting phase: focus, short, or long (aliases short-break, long-break). With --confirm, omit to choose at startup.
   -q, --quiet          Log transitions only, no live countdown.
   --timestamp          Prefix history lines with the current time ([HH:MM:SS]).
   --confirm            Awaits y/n on each phase transition (requires interactive stdin).
@@ -84,6 +85,18 @@ exits after the long break without a trailing prompt.
 
 `--cycles` sets the long-break cadence; without `--no-loop` the timer loops
 forever (`--cycles 2 --no-loop` runs 2 focuses then exits).
+
+`--start <phase>` begins in that phase instead of focus: `focus` (default),
+`short` (`short-break`), or `long` (`long-break`, case-insensitive). With
+`--confirm` and no `--start`, the timer asks once at startup
+(`Choose starting phase: 1) Focus 2) Short break 3) Long break [1]` —
+`1`/`2`/`3`, `f`/`s`/`l`, names, or empty for Focus; anything else re-asks)
+and then gates each transition as usual, so opening on a break flows into
+the first focus via `Short break complete. Start Focus? [y/n]`. An explicit
+`--start` skips the question. `--notify-confirm` never asks (a binary toast
+cannot offer three phases) and starts in focus unless `--start` is given.
+Without a gate the timer just auto-flows from the start phase;
+`--no-loop --start long` runs one long break then exits.
 
 `--timestamp` prefixes every history line (phase lines, pause/resume, summary,
 confirm prompt) with the current local time (`[14:03:22] Focus 1/4 — …`).

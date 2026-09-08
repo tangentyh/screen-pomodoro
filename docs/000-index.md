@@ -10,3 +10,4 @@ Accepted records are binding — follow them, don't relitigate. Proposed records
 - `006-live-pause-history.md` (accepted) — live keeps the in-place paused suffix and also leaves the `Paused`/`Resumed` pair in scrollback; amends 002 Timing, 003 table, 005 G1.
 - `007-no-toast-on-locked-screen.md` (accepted) — nothing fires or lingers on a locked screen; pending `--notify-confirm` toast re-sends on unlock; amends 004 Behavior/D8 + kill inventory, 005 D5 + `confirmPending` edge.
 - `008-overlapping-notifications.md` (accepted) — opt-in `--notify-group <id>` isolates overlapping timers; default group unchanged; amends 004 D3.
+- `009-start-phase.md` (accepted) — `--start <phase>` opens in any phase; stdin `--confirm` without `--start` asks once at startup (empty = Focus); `--notify-confirm` never asks; amends 003.

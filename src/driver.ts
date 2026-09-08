@@ -6,6 +6,7 @@ import {
   buildPhaseLine,
   buildResumedLine,
   buildSummaryLine,
+  parseStartChoice,
   phaseLabel,
   withTimestamp,
   type PhaseNames,
@@ -21,7 +22,7 @@ import {
 } from './notify.js';
 import { createTimer, type Phase, type PomodoroConfig } from './timer.js';
 import { createScreenMonitor, type ScreenMonitor, type ScreenState } from './screen.js';
-import { createStdinConfirmer } from './confirm-stdin.js';
+import { createStdinAsker, createStdinConfirmer } from './confirm-stdin.js';
 
 /** Wake-jump guard threshold per 005 D6: drift beyond this probes before ticking. */
 export const JUMP_THRESHOLD_MS = 5000;
@@ -36,6 +37,11 @@ export interface DriverFlags {
   notifyConfirm: boolean;
   notifyGroup: string;
   screenPause: boolean;
+  /**
+   * Explicit `--start` phase. When omitted, stdin `--confirm` asks once at
+   * startup (default focus); every other mode starts in focus.
+   */
+  startPhase?: Phase | undefined;
 }
 
 /**
@@ -81,7 +87,6 @@ export function startDriver(
 ): Promise<void> {
   void program;
   const timer = createTimer(config);
-  timer.start(Date.now());
   const names = flags.names;
   const useNotify = flags.notify;
   const useNotifyConfirm = flags.notifyConfirm;
@@ -278,6 +283,44 @@ export function startDriver(
   }
 
   const confirmFn = createStdinConfirmer(getReadline, () => finished);
+  const askStartLine = createStdinAsker(getReadline, () => finished);
+
+  /**
+   * Resolve the starting phase. An explicit `--start` always wins; without
+   * one, stdin `--confirm` asks once at startup (empty = Focus) so any
+   * phase can open the run without a flag. `--notify-confirm` never asks —
+   * a binary toast cannot offer three phases — and starts in focus.
+   * Returns `undefined` when SIGINT/EOF aborts the menu (the SIGINT path
+   * already printed the summary and settled the driver).
+   */
+  async function resolveInitialPhase(): Promise<Phase | undefined> {
+    if (flags.startPhase !== undefined) return flags.startPhase;
+    if (!flags.confirm || useNotifyConfirm) return 'focus';
+    confirmPending = true;
+    try {
+      let first = true;
+      for (;;) {
+        if (finished) return undefined;
+        if (first) {
+          // Single bell before the first prompt only (transition parity);
+          // re-prompts after invalid input stay silent.
+          process.stdout.write('\x07');
+          first = false;
+        }
+        const promptAt = Date.now();
+        const menu =
+          `Choose starting phase: 1) ${phaseLabel('focus', names)} ` +
+          `2) ${phaseLabel('shortBreak', names)} ` +
+          `3) ${phaseLabel('longBreak', names)} [1] `;
+        const answer = await askStartLine(stamp(menu, promptAt));
+        if (finished || answer === undefined) return undefined;
+        const parsed = parseStartChoice(answer, names);
+        if (parsed !== undefined) return parsed;
+      }
+    } finally {
+      if (!finished) confirmPending = false;
+    }
+  }
 
   function resumeTimers(): void {
     if (finished || timer.paused) return;
@@ -548,37 +591,51 @@ export function startDriver(
     void runConfirmFlow();
   }
 
-  const unsubscribe = monitor.subscribe(onScreenState);
+  let unsubscribe: () => void = () => undefined;
 
   process.on('SIGINT', onSigint);
 
-  if (flags.live) {
-    // History birth line for parity: later phases each log a full-duration
-    // line on entry, so the first phase must too — otherwise scrollback
-    // shows only its 0:01 death fossil. No bell (startup is not a transition).
-    const startedAt = Date.now();
-    commitLiveLine(stamp(buildPhaseLine(timer, config, names, startedAt), startedAt));
-    render(buildPhaseLine(timer, config, names, startedAt));
-    // Start-while-locked: freeze immediately instead of running until the
-    // first poll notices (≤ POLL_MS). Paused line follows the birth line;
-    // the startup toast is skipped via the paused guard in notifyEntered,
-    // so nothing fires on the lock screen. No-op when active/opted out.
-    onScreenState(monitor.getInitialState());
-    notifyEntered(undefined, timer.phase);
-    if (!timer.paused) {
-      interval = setInterval(() => {
-        void onLiveTick();
-      }, 250);
+  void (async () => {
+    const initial = await resolveInitialPhase();
+    if (finished || initial === undefined) return;
+    // Anchor the first deadline to the answer moment: menu dwell must not
+    // eat into the first phase (startup parity with frozen gating, 003a).
+    timer.start(Date.now(), initial);
+    // Reset the wake-jump baseline past any menu dwell so the first live
+    // tick never mistakes choosing time for a lid-close jump (005 D6).
+    lastLiveWallMs = Date.now();
+    unsubscribe = monitor.subscribe(onScreenState);
+
+    if (flags.live) {
+      // History birth line for parity: later phases each log a full-duration
+      // line on entry, so the first phase must too — otherwise scrollback
+      // shows only its 0:01 death fossil. No bell (startup is not a transition).
+      const startedAt = Date.now();
+      commitLiveLine(stamp(buildPhaseLine(timer, config, names, startedAt), startedAt));
+      render(buildPhaseLine(timer, config, names, startedAt));
+      // Start-while-locked: freeze immediately instead of running until the
+      // first poll notices (≤ POLL_MS). Paused line follows the birth line;
+      // the startup toast is skipped via the paused guard in notifyEntered,
+      // so nothing fires on the lock screen. No-op when active/opted out.
+      onScreenState(monitor.getInitialState());
+      notifyEntered(undefined, timer.phase);
+      if (!timer.paused) {
+        interval = setInterval(() => {
+          void onLiveTick();
+        }, 250);
+      }
+    } else {
+      const startedAt = Date.now();
+      process.stdout.write(
+        `${stamp(buildPhaseLine(timer, config, names, startedAt), startedAt)}\n`,
+      );
+      // Same start-while-locked freeze as the live path (armQuietTimeout
+      // already stays idle while paused).
+      onScreenState(monitor.getInitialState());
+      notifyEntered(undefined, timer.phase);
+      armQuietTimeout();
     }
-  } else {
-    const startedAt = Date.now();
-    process.stdout.write(`${stamp(buildPhaseLine(timer, config, names, startedAt), startedAt)}\n`);
-    // Same start-while-locked freeze as the live path (armQuietTimeout
-    // already stays idle while paused).
-    onScreenState(monitor.getInitialState());
-    notifyEntered(undefined, timer.phase);
-    armQuietTimeout();
-  }
+  })();
 
   return done;
 }
