@@ -58,7 +58,7 @@ Options:
   --timestamp          Prefix history lines with the current time ([HH:MM:SS]).
   --confirm            Awaits y/n on each phase transition (requires interactive stdin).
   --notify             Send a macOS notification on each phase transition (macOS + terminal-notifier required).
-  --notify-confirm     Answer phase transitions by clicking the notification (click = yes, No = no). Implies the confirm gate; does not require interactive stdin.
+  --notify-confirm     Answer phase transitions by clicking the notification (click = start next, Restart = redo). Implies the confirm gate; does not require interactive stdin.
   --no-screen-pause    Do not pause when the screen locks.
   --no-bell            Disable the terminal bell (\x07) on phase changes and prompts.
   --notify-group <id>  Notification group for overlapping timers (default shares one toast).
@@ -125,9 +125,9 @@ brew install terminal-notifier
   Nothing fires while the screen is locked (skipped, not queued — the next
   entry replaces in place), and locking withdraws the visible toast.
 - `--notify-confirm` replaces the stdin gate: each deadline shows a toast
-  (`<current> complete` / `<spent> spent. Start <next> — <upcoming>?
-Click = yes, No = restart`). Click the body for yes, the `No` button for
-  no. Dismissing the toast re-sends it until answered (same group, no
+  (`<current> complete. Start <next>?` / `<spent> spent. Click for <next> —
+<upcoming>, Restart <current> to redo.`). Click the body to start next,
+  the `Restart <current>` button to redo. Dismissing the toast re-sends it until answered (same group, no
   stacking) — the toast equivalent of invalid stdin input. A prompt owed
   across a screen lock is likewise re-sent on unlock, so the click still
   counts exactly once. Without `--start`, one startup toast offers the
@@ -142,7 +142,9 @@ Click = yes, No = restart`). Click the body for yes, the `No` button for
 - Caveats: Focus/DnD holds the toast (timers stay frozen, as with stdin);
   over SSH / launchd-as-root delivery fails (exit 4) → `--notify` logs and
   continues, `--notify-confirm` resolves the pending prompt `false` with a
-  stderr note instead of hanging.
+  stderr note instead of hanging. A comma inside a custom phase name splits
+  the notification buttons (`terminal-notifier` comma-splits `-action` with
+  no escaping) — avoid commas in `--*-name` when using `--notify-confirm`.
 
 ## Screen lock (macOS)
 

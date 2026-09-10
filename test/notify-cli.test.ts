@@ -577,26 +577,26 @@ describe('004 step 2 — --notify-confirm blocking gate', () => {
     expect(stdoutText(out)).toContain('Short break');
     // Single pre-prompt bell (stdin parity) alongside -sound Bottle.
     expect(countBells(stdoutText(out))).toBe(1);
-    // Blocking prompt carried -action No with the D6 click-mapping copy.
+    // Blocking prompt carries -action Restart with the 011 click-mapping copy.
     const prompted = confirmArgvs()[0] ?? [];
     expect(prompted).toContain('-action');
-    expect(prompted).toContain('No');
-    expect(prompted[prompted.indexOf('-title') + 1]).toBe('Focus complete');
+    expect(prompted).toContain('Restart Focus');
+    expect(prompted[prompted.indexOf('-title') + 1]).toBe('Focus complete. Start Short break?');
     expect(prompted[prompted.indexOf('-message') + 1]).toBe(
-      '0:01 spent. Start Short break — 1:00? Click = yes, No = restart',
+      '0:01 spent. Click for Short break — 1:00, Restart Focus to redo.',
     );
     process.emit('SIGINT');
     await expect(runPromise).resolves.toBe(0);
     expect(stdoutText(out)).toMatch(/Completed 1 focuses/);
   });
 
-  it('No restarts the same phase with a full deadline and unchanged count', async () => {
+  it('Restart restarts the same phase with a full deadline and unchanged count', async () => {
     vi.useFakeTimers();
     setPlatform('darwin');
     setStdinIsTTY(false);
-    // Queue two explicit Nos: the second prompt must also restart (count stays
+    // Queue two explicit restarts: the second prompt must also restart (count stays
     // 0) instead of falling through to the helper's default '@ACTIONCLICKED'.
-    mockBinaryAvailable(['No', 'No']);
+    mockBinaryAvailable(['Restart Focus', 'Restart Focus']);
     const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     const runPromise = run([
       '--focus',
