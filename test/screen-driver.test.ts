@@ -641,3 +641,85 @@ describe('005 step 2 — wake-jump guard (D6: JUMP_THRESHOLD_MS = 5000)', () => 
     }
   });
 });
+
+describe('start-while-locked freezes immediately (no toast window before the first poll)', () => {
+  let sigintBaseline = 0;
+
+  beforeEach(() => {
+    sigintBaseline = process.listenerCount('SIGINT');
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+    setStdoutIsTTY(originalStdoutIsTTY);
+    setPlatform(originalPlatform);
+    expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
+  });
+
+  it('quiet: birth line then Paused, clock frozen until unlock', async () => {
+    vi.useFakeTimers();
+    const stub = new StubMonitor('locked');
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const runPromise = run(['--focus', '60s', '--short', '60s', '--long', '60s', '--quiet'], {
+      monitor: stub,
+    });
+    try {
+      await advance(0);
+      expect(stdoutText(out)).toContain('Focus 1/4');
+      expect(stdoutText(out)).toMatch(/Paused Focus — screen locked, timer frozen/);
+      expect(countBells(stdoutText(out))).toBe(0);
+      const frozen = stdoutText(out);
+      await advance(10_000);
+      expect(stdoutText(out)).toBe(frozen);
+      stub.fire('active');
+      await advance(0);
+      expect(stdoutText(out)).toMatch(/Resumed Focus — \d+:\d\d remaining/);
+    } finally {
+      await settle(runPromise);
+    }
+  });
+
+  it('live: no 250ms countdown armed while starting paused, unlock re-arms it', async () => {
+    vi.useFakeTimers();
+    setStdoutIsTTY(true);
+    const stub = new StubMonitor('locked');
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
+    const runPromise = run(['--focus', '60s', '--short', '60s', '--long', '60s'], {
+      monitor: stub,
+    });
+    try {
+      await advance(0);
+      expect(stdoutText(out)).toMatch(/Paused Focus — screen locked, timer frozen/);
+      // Idle like a mid-run lock: no countdown redraws while paused.
+      expect(pollIntervals(setIntervalSpy)).not.toContain(250);
+      stub.fire('active');
+      await advance(500);
+      expect(pollIntervals(setIntervalSpy)).toContain(250);
+      expect(stdoutText(out)).toMatch(/Resumed Focus — \d+:\d\d remaining/);
+    } finally {
+      await settle(runPromise);
+    }
+  });
+
+  it('--no-screen-pause ignores even an initially-locked monitor', async () => {
+    vi.useFakeTimers();
+    const stub = new StubMonitor('locked');
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const runPromise = run(
+      ['--focus', '2s', '--short', '60s', '--long', '60s', '--quiet', '--no-screen-pause'],
+      { monitor: stub },
+    );
+    try {
+      await advance(0);
+      expect(stdoutText(out)).not.toMatch(/Paused .* — screen locked, timer frozen/);
+      // Opt-out runs through the deadline instead of freezing.
+      await advance(2_500);
+      await advance(0);
+      expect(stdoutText(out)).toContain('Short break');
+    } finally {
+      await settle(runPromise);
+    }
+  });
+});

@@ -15,7 +15,7 @@ export interface PomodoroTimer {
   readonly paused: boolean;
   readonly pausedReason: PauseReason | undefined;
   readonly endsAtMs: number;
-  start(nowMs: number): void;
+  start(nowMs: number, initialPhase?: Phase): void;
   tick(nowMs: number): void;
   pause(reason: PauseReason, nowMs: number): void;
   resume(reason: PauseReason, nowMs: number): void;
@@ -91,6 +91,27 @@ export function parseDuration(input: string): number {
   return ms;
 }
 
+/**
+ * Parse a `--start <phase>` value into a `Phase`.
+ *
+ * Accepts `focus`, `short`, `long` (case-insensitive) plus the explicit
+ * `short-break` / `long-break` aliases (dashes, underscores, and spaces
+ * are ignored, so `ShortBreak`, `short_break`, `SHORT BREAK` all work).
+ * Throws on anything else (usage error, exit 1 via the program surface).
+ */
+export function parseStartPhase(raw: string): Phase {
+  const normalized = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, '');
+  if (normalized === 'focus') return 'focus';
+  if (normalized === 'short' || normalized === 'shortbreak') return 'shortBreak';
+  if (normalized === 'long' || normalized === 'longbreak') return 'longBreak';
+  throw new Error(
+    `invalid --start ${JSON.stringify(raw)}: expected one of focus, short, long (aliases short-break, long-break)`,
+  );
+}
+
 export function createTimer(config: PomodoroConfig): PomodoroTimer {
   let phase: Phase = 'focus';
   let focusCount = 0;
@@ -125,12 +146,12 @@ export function createTimer(config: PomodoroConfig): PomodoroTimer {
       return endsAtMs;
     },
 
-    start(nowMs: number): void {
-      phase = 'focus';
+    start(nowMs: number, initialPhase: Phase = 'focus'): void {
+      phase = initialPhase;
       focusCount = 0;
       paused = false;
       pausedReason = undefined;
-      endsAtMs = nowMs + config.focusMs;
+      endsAtMs = nowMs + durationForPhase(config, initialPhase);
       started = true;
     },
 

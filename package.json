@@ -1,6 +1,6 @@
 {
   "name": "screen-pomodoro",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "A tiny CLI pomodoro timer that pauses when your screen locks.",
   "type": "module",
   "license": "MIT",
@@ -8,6 +8,10 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/tangentyh/screen-pomodoro.git"
+  },
+  "homepage": "https://github.com/tangentyh/screen-pomodoro#readme",
+  "bugs": {
+    "url": "https://github.com/tangentyh/screen-pomodoro/issues"
   },
   "keywords": [
     "cli",
@@ -22,7 +26,7 @@
     "node": ">=22"
   },
   "bin": {
-    "screen-pomodoro": "./dist/cli.js"
+    "screen-pomodoro": "dist/cli.js"
   },
   "files": [
     "dist"

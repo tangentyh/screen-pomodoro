@@ -1,4 +1,4 @@
-import type { Phase, PomodoroConfig, PomodoroTimer } from './timer.js';
+import { parseStartPhase, type Phase, type PomodoroConfig, type PomodoroTimer } from './timer.js';
 
 export interface PhaseNames {
   focus: string;
@@ -31,6 +31,37 @@ export function parsePhaseName(raw: string, flag: string): string {
     throw new Error(`invalid ${flag} ${JSON.stringify(raw)}: name must be at most 40 characters`);
   }
   return trimmed;
+}
+
+/**
+ * Parse an interactive start-menu answer into a `Phase`.
+ *
+ * Accepts `1`/`2`/`3`, `f`/`s`/`l`, the `--start` word forms (via
+ * `parseStartPhase`), and the current custom phase labels
+ * (case-insensitive) — plus empty input, which selects the default focus.
+ * Returns `undefined` for anything else so the caller can re-prompt.
+ * Pure (no `node:` imports). Digits/letters take precedence over custom
+ * labels on the rare single-letter collision.
+ */
+export function parseStartChoice(
+  raw: string,
+  names: PhaseNames = DEFAULT_PHASE_NAMES,
+): Phase | undefined {
+  const trimmed = raw.trim();
+  if (trimmed === '') return 'focus';
+  const lowered = trimmed.toLowerCase();
+  if (lowered === '1' || lowered === 'f') return 'focus';
+  if (lowered === '2' || lowered === 's') return 'shortBreak';
+  if (lowered === '3' || lowered === 'l') return 'longBreak';
+  try {
+    return parseStartPhase(trimmed);
+  } catch {
+    // Not a --start word: fall through to the custom-label match.
+  }
+  if (lowered === names.focus.toLowerCase()) return 'focus';
+  if (lowered === names.shortBreak.toLowerCase()) return 'shortBreak';
+  if (lowered === names.longBreak.toLowerCase()) return 'longBreak';
+  return undefined;
 }
 
 /**
