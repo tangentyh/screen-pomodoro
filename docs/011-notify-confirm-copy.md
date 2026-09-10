@@ -60,9 +60,8 @@ Mapping (amends 004 D2 table):
   (trimmed stdout, case-sensitive like 004's `No`). Colliding custom
   labels share `parseStartChoice` order by documentation; comma-split
   fragments fall into "anything else" (fail closed, never spins).
-- `NO_LABEL = 'No'` stays exported as the deprecated fallback default for
-  `createNotificationConfirmer` callers that omit `actionLabel`; the driver
-  always passes the new label. Resend reuses identical argv (new label
+- `createNotificationConfirmer` takes the per-prompt `actionLabel` (required).
+  Resend reuses identical argv (new label
   included); unlock-resend, SIGINT-kill, and `-remove` semantics unchanged.
 
 ## Architecture
@@ -70,8 +69,8 @@ Mapping (amends 004 D2 table):
 - `src/notify.ts`: new `buildNotifyConfirmAction(current, names)`;
   `buildNotifyConfirmTitle` gains `(next, config, focusCount)`; message
   builder reworded; `NotifyConfirmerOptions` gains optional
-  `actionLabel?: string` (default `NO_LABEL`), used for both `-action` argv
-  and the `false` match.
+  required `actionLabel: string`, used for both `-action` argv and the
+  `false` match.
 - `src/driver.ts`: `runConfirmFlow` builds title/message/action with the
   new signatures and passes `actionLabel` through.
 - `src/program.ts`: `--notify-confirm` help reworded
@@ -118,5 +117,5 @@ Mapping (amends 004 D2 table):
       when focus).
 - [x] D2: button `Restart <current>` (bare, verb-first); message
       `<spent> spent. Click for <nextLabel> — <upcoming>, <restart> to redo.`
-- [x] D3: per-prompt exact match on the restart label; `NO_LABEL` kept as
-      deprecated default; comma limit documented, not validated.
+- [x] D3: per-prompt exact match on the restart label (required option,
+      no legacy fallback); comma limit documented, not validated.

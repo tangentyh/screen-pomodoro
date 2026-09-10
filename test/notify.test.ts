@@ -10,7 +10,7 @@
  * - `phaseDurationMs` is not exported from `src/timer.ts` yet.
  *
  * Proposed API under test (per 004 Architecture + Decisions D1–D10):
- * - GROUP_ID / SOUND / NO_LABEL constants
+ * - GROUP_ID / SOUND constants
  * - isNotifySupported(platform?)
  * - escapeNotifierMessage(s)
  * - buildNotifyTitle / buildNotifyMessage (fire-and-forget copy, D9 + D8)
@@ -18,7 +18,7 @@
  * - phaseDurationMs(config, phase) in timer.ts (D7 + D10, pure switch)
  * - checkNotifierAvailable(exec) — `terminal-notifier -version` once
  * - sendNotification(exec, { title, message }) — fire-and-forget, never rejects
- * - createNotificationConfirmer(exec, { title, message, isFinished? }): ConfirmFn
+ * - createNotificationConfirmer(exec, { title, message, actionLabel, isFinished? }): ConfirmFn
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_PHASE_NAMES, type PhaseNames } from '../src/display.js';
@@ -36,7 +36,6 @@ import {
   escapeNotifierMessage,
   GROUP_ID,
   isNotifySupported,
-  NO_LABEL,
   parseNotifyGroup,
   sendNotification,
   SOUND,
@@ -95,10 +94,9 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('004 — notify constants', () => {
-  it('uses a single stable group, Bottle sound, No action label (D3)', () => {
+  it('uses a single stable group and Bottle sound (D3)', () => {
     expect(GROUP_ID).toBe('screen-pomodoro');
     expect(SOUND).toBe('Bottle');
-    expect(NO_LABEL).toBe('No');
   });
 });
 
@@ -376,14 +374,6 @@ describe('011 — createNotificationConfirmer mapping table (amends 004 D2)', ()
     expect(errSpy).not.toHaveBeenCalled();
   });
 
-  it('legacy `No` still resolves false when actionLabel is omitted (deprecated default)', async () => {
-    const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-    const exec = vi.fn(async (): Promise<ExecResult> => ({ stdout: 'No', stderr: '' }));
-    const confirm = createNotificationConfirmer(exec, { title: 't', message: 'm' });
-    await expect(confirm('ignored')).resolves.toBe(false);
-    expect(errSpy).not.toHaveBeenCalled();
-  });
-
   it('trims surrounding whitespace', async () => {
     const { confirm: yes } = confirmerWith(['  @ACTIONCLICKED\n']);
     await expect(yes('ignored')).resolves.toBe(true);
@@ -469,6 +459,7 @@ describe('011 — createNotificationConfirmer mapping table (amends 004 D2)', ()
     const confirm = createNotificationConfirmer(exec, {
       title: 't',
       message: 'm',
+      actionLabel: 'Restart Focus',
       isFinished: () => true,
     });
     await expect(confirm('ignored')).resolves.toBe(false);
@@ -490,6 +481,7 @@ describe('011 — createNotificationConfirmer mapping table (amends 004 D2)', ()
     const confirm = createNotificationConfirmer(exec, {
       title: 't',
       message: 'm',
+      actionLabel: 'Restart Focus',
       consumeResendRequest: () => {
         const requested = resend;
         resend = false;
@@ -517,6 +509,7 @@ describe('011 — createNotificationConfirmer mapping table (amends 004 D2)', ()
     const first = createNotificationConfirmer(exec, {
       title: 't',
       message: 'm',
+      actionLabel: 'Restart Focus',
       consumeResendRequest: consume,
     });
     await expect(first('ignored')).resolves.toBe(true);
@@ -528,6 +521,7 @@ describe('011 — createNotificationConfirmer mapping table (amends 004 D2)', ()
     const second = createNotificationConfirmer(failing, {
       title: 't',
       message: 'm',
+      actionLabel: 'Restart Focus',
       consumeResendRequest: consume,
     });
     await expect(second('ignored')).resolves.toBe(false);
@@ -553,6 +547,7 @@ describe('008 — parseNotifyGroup + custom group isolation', () => {
       title: 't',
       message: 'm',
       group: 'stretch',
+      actionLabel: 'Restart Focus',
     });
     await expect(confirm('ignored')).resolves.toBe(true);
     const argv = exec.mock.calls[0]?.[1] as unknown as string[];

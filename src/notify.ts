@@ -23,8 +23,6 @@ import {
 
 export const GROUP_ID = 'screen-pomodoro';
 export const SOUND = 'Bottle';
-/** Deprecated fallback (pre-011 `No` button); driver always passes `actionLabel`. Kept for compat. */
-export const NO_LABEL = 'No';
 
 const NOTIFIER_BIN = 'terminal-notifier';
 const BREW_HINT = 'terminal-notifier not found: brew install terminal-notifier';
@@ -46,12 +44,8 @@ export interface NotifyPayload {
 }
 
 export interface NotifyConfirmerOptions extends NotifyPayload {
-  /**
-   * Label for the restart `-action` button (011: `Restart <current>`).
-   * Optional for backward compat — defaults to deprecated `NO_LABEL`.
-   * The driver always passes `buildNotifyConfirmAction(current, names)`.
-   */
-  actionLabel?: string | undefined;
+  /** Label for the restart `-action` button (011: `Restart <current>`). */
+  actionLabel: string;
   isFinished?: (() => boolean) | undefined;
   /**
    * Unlock-resend handshake (driver-owned). The driver sets the request
@@ -260,7 +254,7 @@ export async function sendNotification(
 /**
  * Blocking restart-action confirmer implementing the driver `ConfirmFn` seam.
  * Click (`@ACTIONCLICKED`) = yes (start next), the restart button
- * (`actionLabel`, 011 `Restart <current>`, legacy default `No`) = no,
+ * (`actionLabel`, 011 `Restart <current>`) = no,
  * `@CLOSED`/`@TIMEOUT` = re-send the same toast (shared `-group` replaces
  * in place); anything else or a spawn error resolves `false` with a stderr
  * note (never spins).
@@ -269,11 +263,10 @@ export function createNotificationConfirmer(
   exec: ExecFileFn = defaultExec,
   opts: NotifyConfirmerOptions,
 ): (message: string) => Promise<boolean> {
-  const actionLabel = opts.actionLabel ?? NO_LABEL;
   const argv = [
     ...baseArgv(opts.title, opts.message, opts.group ?? GROUP_ID),
     '-action',
-    actionLabel,
+    opts.actionLabel,
   ];
   const isFinished = opts.isFinished;
   const consumeResendRequest = opts.consumeResendRequest;
@@ -301,7 +294,7 @@ export function createNotificationConfirmer(
       // later prompt's genuine failure still resolves `false` (never spins).
       consumeResendRequest?.();
       if (raw === '@ACTIONCLICKED') return true;
-      if (raw === actionLabel) return false;
+      if (raw === opts.actionLabel) return false;
       if (raw === '@CLOSED' || raw === '@TIMEOUT') continue;
       process.stderr.write(`unexpected terminal-notifier output: ${JSON.stringify(raw)}\n`);
       return false;
