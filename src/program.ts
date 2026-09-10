@@ -64,7 +64,7 @@ export function createProgram(monitorOverride?: ScreenMonitor): Command {
     )
     .option(
       '--notify-confirm',
-      'Answer phase transitions by clicking the notification (click = yes, No = no). Implies the confirm gate; does not require interactive stdin.',
+      'Answer phase transitions by clicking the notification (click = start next, Restart = redo). Implies the confirm gate; does not require interactive stdin.',
     )
     .option('--no-screen-pause', 'Do not pause when the screen locks.')
     .option('--no-bell', 'Disable the terminal bell (\\x07) on phase changes and prompts.')

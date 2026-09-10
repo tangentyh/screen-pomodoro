@@ -23,7 +23,6 @@ import {
 
 export const GROUP_ID = 'screen-pomodoro';
 export const SOUND = 'Bottle';
-export const NO_LABEL = 'No';
 
 const NOTIFIER_BIN = 'terminal-notifier';
 const BREW_HINT = 'terminal-notifier not found: brew install terminal-notifier';
@@ -45,6 +44,8 @@ export interface NotifyPayload {
 }
 
 export interface NotifyConfirmerOptions extends NotifyPayload {
+  /** Label for the restart `-action` button (011: `Restart <current>`). */
+  actionLabel: string;
   isFinished?: (() => boolean) | undefined;
   /**
    * Unlock-resend handshake (driver-owned). The driver sets the request
@@ -182,8 +183,23 @@ export function buildNotifyMessage(
   return `${spent} spent on ${phaseLabel(leaving, names)}. ${enteredTitle} — ${formatClock(upcomingMs)} remaining`;
 }
 
-export function buildNotifyConfirmTitle(current: NotifyPhase, names: PhaseNames): string {
-  return `${phaseLabel(current, names)} complete`;
+/**
+ * Restart-button label (011, verb-first per HIG): `Restart <current>`.
+ * Bare finished-side label (no focus counter) per 004 D9.
+ */
+export function buildNotifyConfirmAction(current: NotifyPhase, names: PhaseNames): string {
+  return `Restart ${phaseLabel(current, names)}`;
+}
+
+export function buildNotifyConfirmTitle(
+  current: NotifyPhase,
+  next: NotifyPhase,
+  config: NotifyConfig,
+  names: PhaseNames,
+  focusCount: number,
+): string {
+  const nextLabel = focusSuffixedLabel(next, config, names, focusCount);
+  return `${phaseLabel(current, names)} complete. Start ${nextLabel}?`;
 }
 
 export function buildNotifyConfirmMessage(
@@ -196,7 +212,8 @@ export function buildNotifyConfirmMessage(
   const spent = formatClock(notifyDurationMs(config, current));
   const upcoming = formatClock(notifyDurationMs(config, next));
   const nextLabel = focusSuffixedLabel(next, config, names, focusCount);
-  return `${spent} spent. Start ${nextLabel} — ${upcoming}? Click = yes, No = restart`;
+  const restart = buildNotifyConfirmAction(current, names);
+  return `${spent} spent. Click for ${nextLabel} — ${upcoming}, ${restart} to redo.`;
 }
 
 /** Startup guard: one `terminal-notifier -version` probe, ENOENT/exit-3 mapped. */
@@ -235,16 +252,22 @@ export async function sendNotification(
 }
 
 /**
- * Blocking `-action No` confirmer implementing the driver `ConfirmFn` seam.
- * Click (`@ACTIONCLICKED`) = yes, `No` = no, `@CLOSED`/`@TIMEOUT` = re-send
- * the same toast (shared `-group` replaces in place); anything else or a
- * spawn error resolves `false` with a stderr note (never spins).
+ * Blocking restart-action confirmer implementing the driver `ConfirmFn` seam.
+ * Click (`@ACTIONCLICKED`) = yes (start next), the restart button
+ * (`actionLabel`, 011 `Restart <current>`) = no,
+ * `@CLOSED`/`@TIMEOUT` = re-send the same toast (shared `-group` replaces
+ * in place); anything else or a spawn error resolves `false` with a stderr
+ * note (never spins).
  */
 export function createNotificationConfirmer(
   exec: ExecFileFn = defaultExec,
   opts: NotifyConfirmerOptions,
 ): (message: string) => Promise<boolean> {
-  const argv = [...baseArgv(opts.title, opts.message, opts.group ?? GROUP_ID), '-action', NO_LABEL];
+  const argv = [
+    ...baseArgv(opts.title, opts.message, opts.group ?? GROUP_ID),
+    '-action',
+    opts.actionLabel,
+  ];
   const isFinished = opts.isFinished;
   const consumeResendRequest = opts.consumeResendRequest;
   return async (_message: string): Promise<boolean> => {
@@ -271,7 +294,7 @@ export function createNotificationConfirmer(
       // later prompt's genuine failure still resolves `false` (never spins).
       consumeResendRequest?.();
       if (raw === '@ACTIONCLICKED') return true;
-      if (raw === NO_LABEL) return false;
+      if (raw === opts.actionLabel) return false;
       if (raw === '@CLOSED' || raw === '@TIMEOUT') continue;
       process.stderr.write(`unexpected terminal-notifier output: ${JSON.stringify(raw)}\n`);
       return false;

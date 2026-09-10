@@ -12,6 +12,7 @@ import {
   type PhaseNames,
 } from './display.js';
 import {
+  buildNotifyConfirmAction,
   buildNotifyConfirmMessage,
   buildNotifyConfirmTitle,
   buildNotifyMessage,
@@ -397,13 +398,14 @@ export function startDriver(
       const promptAt = Date.now();
       let confirmed: boolean;
       if (useNotifyConfirm) {
-        const title = buildNotifyConfirmTitle(current, names);
+        const title = buildNotifyConfirmTitle(current, next, config, names, timer.focusCount);
         const message = buildNotifyConfirmMessage(current, next, config, names, timer.focusCount);
         ring();
         const confirmer = createNotificationConfirmer(notifyExec, {
           title,
           message,
           group: flags.notifyGroup,
+          actionLabel: buildNotifyConfirmAction(current, names),
           isFinished: () => finished,
           consumeResendRequest: () => {
             const requested = confirmResendRequested;

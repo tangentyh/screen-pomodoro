@@ -10,7 +10,7 @@
  * - `phaseDurationMs` is not exported from `src/timer.ts` yet.
  *
  * Proposed API under test (per 004 Architecture + Decisions D1–D10):
- * - GROUP_ID / SOUND / NO_LABEL constants
+ * - GROUP_ID / SOUND constants
  * - isNotifySupported(platform?)
  * - escapeNotifierMessage(s)
  * - buildNotifyTitle / buildNotifyMessage (fire-and-forget copy, D9 + D8)
@@ -18,11 +18,12 @@
  * - phaseDurationMs(config, phase) in timer.ts (D7 + D10, pure switch)
  * - checkNotifierAvailable(exec) — `terminal-notifier -version` once
  * - sendNotification(exec, { title, message }) — fire-and-forget, never rejects
- * - createNotificationConfirmer(exec, { title, message, isFinished? }): ConfirmFn
+ * - createNotificationConfirmer(exec, { title, message, actionLabel, isFinished? }): ConfirmFn
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_PHASE_NAMES, type PhaseNames } from '../src/display.js';
 import {
+  buildNotifyConfirmAction,
   buildNotifyConfirmMessage,
   buildNotifyConfirmTitle,
   buildNotifyMessage,
@@ -35,7 +36,6 @@ import {
   escapeNotifierMessage,
   GROUP_ID,
   isNotifySupported,
-  NO_LABEL,
   parseNotifyGroup,
   sendNotification,
   SOUND,
@@ -94,10 +94,9 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('004 — notify constants', () => {
-  it('uses a single stable group, Bottle sound, No action label (D3)', () => {
+  it('uses a single stable group and Bottle sound (D3)', () => {
     expect(GROUP_ID).toBe('screen-pomodoro');
     expect(SOUND).toBe('Bottle');
-    expect(NO_LABEL).toBe('No');
   });
 });
 
@@ -213,27 +212,43 @@ describe('004 — buildNotifyMessage (D9 + D7 nominal clocks)', () => {
   });
 });
 
-describe('004 — confirm copy (D6)', () => {
-  it('title is `<current> complete`: `Deep work complete`', () => {
-    expect(buildNotifyConfirmTitle('focus', DEFAULT_PHASE_NAMES)).toBe('Focus complete');
-    expect(buildNotifyConfirmTitle('focus', CUSTOM)).toBe('Deep work complete');
+describe('011 — confirm copy (amends 004 D6)', () => {
+  it('title states the proposal: `Focus complete. Start Short break?`', () => {
+    expect(buildNotifyConfirmTitle('focus', 'shortBreak', CONFIG, DEFAULT_PHASE_NAMES, 1)).toBe(
+      'Focus complete. Start Short break?',
+    );
+    expect(buildNotifyConfirmTitle('focus', 'shortBreak', CONFIG, CUSTOM, 1)).toBe(
+      'Deep work complete. Start Coffee?',
+    );
   });
 
-  it('message: `25:00 spent. Start Short break — 5:00? Click = yes, No = restart`', () => {
+  it('next focus carries the counter in the title', () => {
+    expect(buildNotifyConfirmTitle('shortBreak', 'focus', CONFIG, DEFAULT_PHASE_NAMES, 1)).toBe(
+      'Short break complete. Start Focus 2/4?',
+    );
+  });
+
+  it('action is verb-first: `Restart <current>` (bare, no counter)', () => {
+    expect(buildNotifyConfirmAction('focus', DEFAULT_PHASE_NAMES)).toBe('Restart Focus');
+    expect(buildNotifyConfirmAction('focus', CUSTOM)).toBe('Restart Deep work');
+    expect(buildNotifyConfirmAction('shortBreak', CUSTOM)).toBe('Restart Coffee');
+  });
+
+  it('message: `25:00 spent. Click for Short break — 5:00, Restart Focus to redo.`', () => {
     expect(buildNotifyConfirmMessage('focus', 'shortBreak', CONFIG, DEFAULT_PHASE_NAMES, 1)).toBe(
-      '25:00 spent. Start Short break — 5:00? Click = yes, No = restart',
+      '25:00 spent. Click for Short break — 5:00, Restart Focus to redo.',
     );
   });
 
-  it('custom names: `25:00 spent. Start Coffee — 5:00? Click = yes, No = restart`', () => {
+  it('custom names: `25:00 spent. Click for Coffee — 5:00, Restart Deep work to redo.`', () => {
     expect(buildNotifyConfirmMessage('focus', 'shortBreak', CONFIG, CUSTOM, 1)).toBe(
-      '25:00 spent. Start Coffee — 5:00? Click = yes, No = restart',
+      '25:00 spent. Click for Coffee — 5:00, Restart Deep work to redo.',
     );
   });
 
-  it('next focus carries the counter in the confirm proposal', () => {
+  it('next focus carries the counter in the message proposal', () => {
     expect(buildNotifyConfirmMessage('shortBreak', 'focus', CONFIG, DEFAULT_PHASE_NAMES, 1)).toBe(
-      '5:00 spent. Start Focus 2/4 — 25:00? Click = yes, No = restart',
+      '5:00 spent. Click for Focus 2/4 — 25:00, Restart Short break to redo.',
     );
   });
 });
@@ -326,10 +341,10 @@ describe('004 — sendNotification (fire-and-forget)', () => {
   });
 });
 
-describe('004 — createNotificationConfirmer mapping table (D2)', () => {
+describe('011 — createNotificationConfirmer mapping table (amends 004 D2)', () => {
   function confirmerWith(
     outputs: (string | Error)[],
-    opts?: { title?: string; message?: string; isFinished?: () => boolean },
+    opts?: { title?: string; message?: string; actionLabel?: string; isFinished?: () => boolean },
   ): { exec: ReturnType<typeof vi.fn>; confirm: (msg: string) => Promise<boolean> } {
     const queue = [...outputs];
     const exec = vi.fn(async (_file: string, _args: readonly string[]): Promise<ExecResult> => {
@@ -338,8 +353,9 @@ describe('004 — createNotificationConfirmer mapping table (D2)', () => {
       return { stdout: next ?? '', stderr: '' };
     });
     const confirm = createNotificationConfirmer(exec, {
-      title: opts?.title ?? 'Focus complete',
-      message: opts?.message ?? '25:00 spent. Start Short break — 5:00? Click = yes, No = restart',
+      title: opts?.title ?? 'Focus complete. Start Short break?',
+      message: opts?.message ?? '25:00 spent. Click for Short break — 5:00, Restart Focus to redo.',
+      actionLabel: opts?.actionLabel ?? 'Restart Focus',
       isFinished: opts?.isFinished,
     });
     return { exec, confirm };
@@ -350,18 +366,18 @@ describe('004 — createNotificationConfirmer mapping table (D2)', () => {
     await expect(confirm('ignored')).resolves.toBe(true);
   });
 
-  it('`No` (action button) → false, exact title', async () => {
+  it('restart button (`Restart Focus`) → false, exact label', async () => {
     const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-    const { confirm } = confirmerWith(['No']);
+    const { confirm } = confirmerWith(['Restart Focus']);
     await expect(confirm('ignored')).resolves.toBe(false);
-    // Explicit No is an answer, not a failure: no stderr note required.
+    // Explicit restart is an answer, not a failure: no stderr note required.
     expect(errSpy).not.toHaveBeenCalled();
   });
 
   it('trims surrounding whitespace', async () => {
     const { confirm: yes } = confirmerWith(['  @ACTIONCLICKED\n']);
     await expect(yes('ignored')).resolves.toBe(true);
-    const { confirm: no } = confirmerWith(['  No  \n']);
+    const { confirm: no } = confirmerWith(['  Restart Focus  \n']);
     await expect(no('ignored')).resolves.toBe(false);
   });
 
@@ -377,7 +393,7 @@ describe('004 — createNotificationConfirmer mapping table (D2)', () => {
   });
 
   it('@TIMEOUT → re-sends (defensive; V1 sets no -timeout)', async () => {
-    const { exec, confirm } = confirmerWith(['@TIMEOUT', 'No']);
+    const { exec, confirm } = confirmerWith(['@TIMEOUT', 'Restart Focus']);
     await expect(confirm('ignored')).resolves.toBe(false);
     expect(exec).toHaveBeenCalledTimes(2);
   });
@@ -389,9 +405,9 @@ describe('004 — createNotificationConfirmer mapping table (D2)', () => {
     expect(errSpy).toHaveBeenCalled();
   });
 
-  it('button title is exact: `no`/`NO` are not the explicit answer (still false, with note)', async () => {
+  it('button title is exact: `restart focus`/`RESTART FOCUS` are not the explicit answer (still false, with note)', async () => {
     const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-    const { confirm: lower } = confirmerWith(['no']);
+    const { confirm: lower } = confirmerWith(['restart focus']);
     await expect(lower('ignored')).resolves.toBe(false);
     expect(errSpy).toHaveBeenCalled();
   });
@@ -407,10 +423,11 @@ describe('004 — createNotificationConfirmer mapping table (D2)', () => {
     expect(errSpy).toHaveBeenCalled();
   });
 
-  it('argv asserts -group/-sound/-action No with title/message as separate entries (no shell)', async () => {
+  it('argv asserts -group/-sound/-action Restart with title/message as separate entries (no shell)', async () => {
     const { exec, confirm } = confirmerWith(['@ACTIONCLICKED'], {
-      title: 'Deep work complete',
-      message: '25:00 spent. Start Coffee — 5:00? Click = yes, No = restart',
+      title: 'Deep work complete. Start Coffee?',
+      message: '25:00 spent. Click for Coffee — 5:00, Restart Deep work to redo.',
+      actionLabel: 'Restart Deep work',
     });
     await confirm('ignored');
     expect(exec.mock.calls[0]?.[0]).toBe('terminal-notifier');
@@ -420,10 +437,10 @@ describe('004 — createNotificationConfirmer mapping table (D2)', () => {
     expect(argv).toContain('-sound');
     expect(argv).toContain(SOUND);
     expect(argv).toContain('-action');
-    expect(argv).toContain(NO_LABEL);
-    expect(argv[argv.indexOf('-title') + 1]).toBe('Deep work complete');
+    expect(argv).toContain('Restart Deep work');
+    expect(argv[argv.indexOf('-title') + 1]).toBe('Deep work complete. Start Coffee?');
     expect(argv[argv.indexOf('-message') + 1]).toBe(
-      '25:00 spent. Start Coffee — 5:00? Click = yes, No = restart',
+      '25:00 spent. Click for Coffee — 5:00, Restart Deep work to redo.',
     );
   });
 
@@ -442,6 +459,7 @@ describe('004 — createNotificationConfirmer mapping table (D2)', () => {
     const confirm = createNotificationConfirmer(exec, {
       title: 't',
       message: 'm',
+      actionLabel: 'Restart Focus',
       isFinished: () => true,
     });
     await expect(confirm('ignored')).resolves.toBe(false);
@@ -463,6 +481,7 @@ describe('004 — createNotificationConfirmer mapping table (D2)', () => {
     const confirm = createNotificationConfirmer(exec, {
       title: 't',
       message: 'm',
+      actionLabel: 'Restart Focus',
       consumeResendRequest: () => {
         const requested = resend;
         resend = false;
@@ -490,6 +509,7 @@ describe('004 — createNotificationConfirmer mapping table (D2)', () => {
     const first = createNotificationConfirmer(exec, {
       title: 't',
       message: 'm',
+      actionLabel: 'Restart Focus',
       consumeResendRequest: consume,
     });
     await expect(first('ignored')).resolves.toBe(true);
@@ -501,6 +521,7 @@ describe('004 — createNotificationConfirmer mapping table (D2)', () => {
     const second = createNotificationConfirmer(failing, {
       title: 't',
       message: 'm',
+      actionLabel: 'Restart Focus',
       consumeResendRequest: consume,
     });
     await expect(second('ignored')).resolves.toBe(false);
@@ -526,6 +547,7 @@ describe('008 — parseNotifyGroup + custom group isolation', () => {
       title: 't',
       message: 'm',
       group: 'stretch',
+      actionLabel: 'Restart Focus',
     });
     await expect(confirm('ignored')).resolves.toBe(true);
     const argv = exec.mock.calls[0]?.[1] as unknown as string[];
