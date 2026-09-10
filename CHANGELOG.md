@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-09-10
+
+### Changed
+
+- `--notify-confirm` toast copy states the proposal in the title and uses a verb-first restart button: `<current> complete. Start <next>?` (e.g. `Focus complete. Start Short break?`, with the focus counter when proposing focus) and message `<spent> spent. Click for <next> — <upcoming>, Restart <current> to redo.`, replacing the bare `<current> complete` title and `No` button. Clicking the body still starts the next phase, the `Restart <current>` button still redoes the current one, and resend / unlock-resend / SIGINT-kill semantics are unchanged. A comma in a custom phase name now also splits the restart button label (same documented limit as the startup chooser).
+
 ## [0.3.0] - 2026-09-08
 
 ### Added
