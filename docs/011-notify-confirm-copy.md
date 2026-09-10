@@ -68,8 +68,8 @@ Mapping (amends 004 D2 table):
 
 - `src/notify.ts`: new `buildNotifyConfirmAction(current, names)`;
   `buildNotifyConfirmTitle` gains `(next, config, focusCount)`; message
-  builder reworded; `NotifyConfirmerOptions` gains optional
-  required `actionLabel: string`, used for both `-action` argv and the
+  builder reworded; `NotifyConfirmerOptions` gains required
+  `actionLabel: string`, used for both `-action` argv and the
   `false` match.
 - `src/driver.ts`: `runConfirmFlow` builds title/message/action with the
   new signatures and passes `actionLabel` through.
@@ -91,7 +91,7 @@ Mapping (amends 004 D2 table):
 - `test/notify.test.ts`: title/message/action builders (default + custom +
   counter), confirmer mapping against dynamic label (exact, whitespace
   trim, `@CLOSED` resend with identical argv incl. label, unexpected →
-  `false` + note, default fallback `No` when `actionLabel` omitted).
+  `false` + note).
 - `test/notify-cli.test.ts`: driver prompt carries new title/message/
   `-action Restart …`; click advances, button restarts.
 
