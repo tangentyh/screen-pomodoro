@@ -4,8 +4,6 @@
 
 A tiny CLI pomodoro timer that pauses when your screen locks.
 
-> 🚧 **Under construction** — the repo currently holds the CLI scaffold (entry point, `--help` / `--version` plumbing, tests, CI). The pomodoro timing and screen-lock awareness land in an upcoming release.
-
 - Runnable via `npx` — no install step required
 - Fully typed TypeScript (strict, ESM), tested with Vitest
 
@@ -54,13 +52,16 @@ Options:
   --short <duration>   Short break duration (minutes or with s/m/h suffix). (default: "5")
   --long <duration>    Long break duration (minutes or with s/m/h suffix). (default: "15")
   --cycles <n>         Focuses per long break (integer >= 1). Loops forever unless --no-loop is given. (default: "4")
-  --no-loop            Stop after the first long break (i.e. after --cycles focuses) instead of looping forever.
+  --no-loop            Stop after the first long break (with the default start, after --cycles focuses) instead of looping forever.
+  --start <phase>      Starting phase: focus, short, or long (aliases short-break, long-break). With --confirm/--notify-confirm, omit to choose at startup.
   -q, --quiet          Log transitions only, no live countdown.
   --timestamp          Prefix history lines with the current time ([HH:MM:SS]).
   --confirm            Awaits y/n on each phase transition (requires interactive stdin).
   --notify             Send a macOS notification on each phase transition (macOS + terminal-notifier required).
   --notify-confirm     Answer phase transitions by clicking the notification (click = yes, No = no). Implies the confirm gate; does not require interactive stdin.
   --no-screen-pause    Do not pause when the screen locks.
+  --no-bell            Disable the terminal bell (\x07) on phase changes and prompts.
+  --notify-group <id>  Notification group for overlapping timers (default shares one toast).
   --focus-name <name>  Custom label for focus phases. (default: "Focus")
   --short-name <name>  Custom label for short breaks. (default: "Short break")
   --long-name <name>   Custom label for long breaks. (default: "Long break")
@@ -72,7 +73,7 @@ and summary (`--focus-name "Deep work"` → `Deep work 1/4`,
 `Completed 3 Deep work`). Names must be non-empty after trimming, at most 40
 characters, with no control characters.
 
-With `--confirm`, each deadline rings once and asks:
+With `--confirm`, each deadline rings once (unless `--no-bell`) and asks:
 
 ```
 Deep work complete. Start Coffee? [y/n] y
@@ -85,6 +86,21 @@ exits after the long break without a trailing prompt.
 
 `--cycles` sets the long-break cadence; without `--no-loop` the timer loops
 forever (`--cycles 2 --no-loop` runs 2 focuses then exits).
+
+`--start <phase>` begins in that phase instead of focus: `focus` (default),
+`short` (`short-break`), or `long` (`long-break`, case-insensitive). With
+`--confirm` and no `--start`, the timer asks once at startup
+(`Choose starting phase: 1) Focus 2) Short break 3) Long break [1]` —
+`1`/`2`/`3`, `f`/`s`/`l`, names, or empty for Focus; anything else re-asks)
+and then gates each transition as usual, so opening on a break flows into
+the first focus via `Short break complete. Start Focus? [y/n]`. With
+`--notify-confirm` and no `--start`, the timer shows one toast with three
+actions (the phase labels, custom-name aware) instead — click a button to
+start there, click the body for Focus; dismissing re-sends until answered.
+An explicit
+`--start` skips the question under either gate.
+Without a gate the timer just auto-flows from the start phase;
+`--no-loop --start long` runs one long break then exits.
 
 `--timestamp` prefixes every history line (phase lines, pause/resume, summary,
 confirm prompt) with the current local time (`[14:03:22] Focus 1/4 — …`).
@@ -104,14 +120,25 @@ brew install terminal-notifier
 
 - `--notify` sends one fire-and-forget toast per transition (startup included)
   alongside the usual bell + phase line, in both live and quiet modes.
+  Pass `--no-bell` for toast + sound only (single chime instead of two).
   A missed toast never kills the timer (one stderr note, then bell+text).
+  Nothing fires while the screen is locked (skipped, not queued — the next
+  entry replaces in place), and locking withdraws the visible toast.
 - `--notify-confirm` replaces the stdin gate: each deadline shows a toast
   (`<current> complete` / `<spent> spent. Start <next> — <upcoming>?
 Click = yes, No = restart`). Click the body for yes, the `No` button for
   no. Dismissing the toast re-sends it until answered (same group, no
-  stacking) — the toast equivalent of invalid stdin input.
+  stacking) — the toast equivalent of invalid stdin input. A prompt owed
+  across a screen lock is likewise re-sent on unlock, so the click still
+  counts exactly once. Without `--start`, one startup toast offers the
+  three phases first (click = Focus) before the first phase line.
 - `--notify-confirm` cannot be combined with `--confirm` or `--notify`
   (one source only), and unlike `--confirm` it works without a TTY.
+- Overlapping timers: by default all timers share one group, so the second
+  timer's toast replaces the first's. Pass distinct `--notify-group <id>`
+  values (e.g. `--notify-group work` vs `--notify-group stretch`) to keep
+  each timer's toasts, prompts, and cleanup isolated. Requires `--notify`
+  or `--notify-confirm`; at most 64 characters, no control characters.
 - Caveats: Focus/DnD holds the toast (timers stay frozen, as with stdin);
   over SSH / launchd-as-root delivery fails (exit 4) → `--notify` logs and
   continues, `--notify-confirm` resolves the pending prompt `false` with a
@@ -145,7 +172,10 @@ opts out (no polling at all, quiet mode stays fully idle).
   lock-semantics answer there, and idle-time pause is out of scope.
 - Fast-user-switch scoping is unverified and deferred.
 - Rapid lock↔unlock within one interval coalesces silently; lock while
-  `--confirm` is pending is a no-op and the answer still wins.
+  `--confirm` is pending is a no-op and the answer still wins (a pending
+  `--notify-confirm` toast is re-sent on unlock so it stays answerable).
+  Starting while locked freezes immediately instead of running until the
+  first poll.
 - Lid-close sleep freezes the process; on wake a >5s wall-clock jump probes
   before ticking so a lock-freeze lands before any phase cascade (unlocked-
   on-wake cascade on no-password machines is a known V1 limitation).

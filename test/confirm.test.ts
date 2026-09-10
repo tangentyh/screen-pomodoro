@@ -215,6 +215,8 @@ describe('003 — confirm gate', () => {
       '4',
       '--quiet',
       '--confirm',
+      '--start',
+      'focus',
     ]);
     await advance(0);
     await advance(1_200);
@@ -245,6 +247,8 @@ describe('003 — confirm gate', () => {
       '4',
       '--quiet',
       '--confirm',
+      '--start',
+      'focus',
     ]);
     await advance(0);
     expect(stdoutText(out)).toContain('Focus 1/4');
@@ -275,6 +279,8 @@ describe('003 — confirm gate', () => {
       '4',
       '--quiet',
       '--confirm',
+      '--start',
+      'focus',
     ]);
     await advance(0);
     await advance(1_200); // focus -> short (count 1)
@@ -303,6 +309,8 @@ describe('003 — confirm gate', () => {
       '4',
       '--quiet',
       '--confirm',
+      '--start',
+      'focus',
     ]);
     await advance(0);
     await advance(2_200); // deadline -> prompt
@@ -341,6 +349,8 @@ describe('003 — confirm gate', () => {
       '60s',
       '--quiet',
       '--confirm',
+      '--start',
+      'focus',
     ]);
     await advance(0);
     await advance(1_200);
@@ -372,6 +382,8 @@ describe('003 — confirm gate', () => {
       '60s',
       '--quiet',
       '--confirm',
+      '--start',
+      'focus',
     ]);
     await advance(0);
     await advance(1_200);
@@ -397,6 +409,8 @@ describe('003 — confirm gate', () => {
         '60s',
         '--quiet',
         '--confirm',
+        '--start',
+        'focus',
       ]);
       await advance(0);
       await advance(1_200);
@@ -423,6 +437,8 @@ describe('003 — confirm gate', () => {
       '60s',
       '--quiet',
       '--confirm',
+      '--start',
+      'focus',
     ]);
     await advance(0);
     await advance(1_200);
@@ -450,6 +466,8 @@ describe('003 — confirm gate', () => {
       'Coffee',
       '--quiet',
       '--confirm',
+      '--start',
+      'focus',
     ]);
     await advance(0);
     await advance(1_200);
@@ -475,6 +493,8 @@ describe('003 — confirm gate', () => {
       '60s',
       '--quiet',
       '--confirm',
+      '--start',
+      'focus',
     ]);
     await advance(0);
     await advance(1_200);
@@ -497,7 +517,17 @@ describe('003 — confirm gate', () => {
     setStdoutIsTTY(true);
     const rl = mockReadlineManual();
     const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const runPromise = run(['--focus', '1s', '--short', '60s', '--long', '60s', '--confirm']);
+    const runPromise = run([
+      '--focus',
+      '1s',
+      '--short',
+      '60s',
+      '--long',
+      '60s',
+      '--confirm',
+      '--start',
+      'focus',
+    ]);
     await advance(500);
     await advance(1_000); // cross the 1s deadline
     expect(rl.questionSpy).toHaveBeenCalledTimes(1);
@@ -528,6 +558,8 @@ describe('003 — confirm gate', () => {
       '4',
       '--quiet',
       '--confirm',
+      '--start',
+      'focus',
     ]);
     await advance(0);
     // Jump far past several phases at once. Gating time is frozen: the 9s
@@ -570,6 +602,8 @@ describe('003 — confirm gate', () => {
       '60s',
       '--quiet',
       '--confirm',
+      '--start',
+      'focus',
     ]);
     await advance(0);
     await advance(1_200);
@@ -601,6 +635,8 @@ describe('003 — confirm gate', () => {
       '60s',
       '--quiet',
       '--confirm',
+      '--start',
+      'focus',
     ]);
     await advance(0);
     await advance(1_200);
@@ -628,6 +664,8 @@ describe('003 — confirm gate', () => {
       '--quiet',
       '--no-loop',
       '--confirm',
+      '--start',
+      'focus',
     ]);
     await advance(0);
     await advance(1_200);
@@ -655,6 +693,8 @@ describe('003 — confirm gate', () => {
       '60s',
       '--quiet',
       '--confirm',
+      '--start',
+      'focus',
     ]);
     await advance(0);
     expect(rl.createSpy).not.toHaveBeenCalled();
@@ -682,6 +722,8 @@ describe('003 — confirm gate', () => {
       '60s',
       '--quiet',
       '--confirm',
+      '--start',
+      'focus',
     ]);
     await advance(0);
     await advance(1_200);

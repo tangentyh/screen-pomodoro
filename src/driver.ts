@@ -6,6 +6,7 @@ import {
   buildPhaseLine,
   buildResumedLine,
   buildSummaryLine,
+  parseStartChoice,
   phaseLabel,
   withTimestamp,
   type PhaseNames,
@@ -14,15 +15,17 @@ import {
   buildNotifyConfirmMessage,
   buildNotifyConfirmTitle,
   buildNotifyMessage,
+  buildNotifyStartMessage,
+  buildNotifyStartTitle,
   buildNotifyTitle,
   createNotificationConfirmer,
-  GROUP_ID,
+  createNotificationStartChooser,
   sendNotification,
   type ExecFileFn,
 } from './notify.js';
 import { createTimer, type Phase, type PomodoroConfig } from './timer.js';
 import { createScreenMonitor, type ScreenMonitor, type ScreenState } from './screen.js';
-import { createStdinConfirmer } from './confirm-stdin.js';
+import { createStdinAsker, createStdinConfirmer } from './confirm-stdin.js';
 
 /** Wake-jump guard threshold per 005 D6: drift beyond this probes before ticking. */
 export const JUMP_THRESHOLD_MS = 5000;
@@ -35,7 +38,15 @@ export interface DriverFlags {
   confirm: boolean;
   notify: boolean;
   notifyConfirm: boolean;
+  notifyGroup: string;
   screenPause: boolean;
+  /** `--no-bell` silences every `\x07` (010); default rings. */
+  bell: boolean;
+  /**
+   * Explicit `--start` phase. When omitted, stdin `--confirm` asks once at
+   * startup (default focus); every other mode starts in focus.
+   */
+  startPhase?: Phase | undefined;
 }
 
 /**
@@ -81,11 +92,15 @@ export function startDriver(
 ): Promise<void> {
   void program;
   const timer = createTimer(config);
-  timer.start(Date.now());
   const names = flags.names;
   const useNotify = flags.notify;
   const useNotifyConfirm = flags.notifyConfirm;
   const gating = flags.confirm || useNotifyConfirm;
+  const bellEnabled = flags.bell ?? true;
+  const bellPrefix = bellEnabled ? '\x07' : '';
+  function ring(): void {
+    if (bellEnabled) process.stdout.write('\x07');
+  }
 
   /**
    * Prefix a history line with `[HH:MM:SS]` when `--timestamp` is set.
@@ -105,6 +120,17 @@ export function startDriver(
   let confirmPending = false;
   let rl: readline.Interface | undefined;
   let pendingChild: { kill?: () => void } | undefined;
+  /**
+   * Raw screen edge, tracked even while a confirm prompt owns the countdown
+   * (where the pause itself is a no-op). Lets an unlock re-send a pending
+   * `--notify-confirm` toast that the lock may have taken off screen.
+   */
+  let screenLocked = false;
+  /**
+   * Unlock-resend handshake for the notification confirmer: one request per
+   * unlock edge, consumed there (or dropped when an answer wins the race).
+   */
+  let confirmResendRequested = false;
   // Wake-jump guard (005 D6): wall-clock of the last live tick. Quiet drift
   // is measured per-timeout via its scheduled-at stamp (see armQuietTimeout).
   let lastLiveWallMs = Date.now();
@@ -133,10 +159,16 @@ export function startDriver(
     });
 
   function notifyEntered(before: Phase | undefined, entered: Phase): void {
-    if (!useNotify || finished) return;
+    // Never fire a toast while the countdown is frozen on a locked screen:
+    // the tick paths bail out while paused, but a transition can still win
+    // the race just before the lock is noticed (or startup can land while
+    // locked). A skipped toast is replaced in place by the next entry's
+    // toast (shared -group), so nothing stacks and nothing shows on the
+    // lock screen. The Paused history line remains the source of truth.
+    if (!useNotify || finished || timer.paused) return;
     const title = buildNotifyTitle(entered, config, names, timer.focusCount);
     const message = buildNotifyMessage(before, entered, config, names, timer.focusCount);
-    void sendNotification(notifyExec, { title, message });
+    void sendNotification(notifyExec, { title, message, group: flags.notifyGroup });
   }
 
   function killPendingNotifier(): void {
@@ -154,10 +186,26 @@ export function startDriver(
     }
   }
 
+  /**
+   * Unlock-resend: kill the waiting `--notify-confirm` child so the
+   * confirmer re-sends the same toast (same `-group`, replaces in place).
+   * Banner toasts auto-dismiss and the lock-time `-remove` shares the
+   * group, so without this the timer could wait forever behind an
+   * invisible prompt. No-ops unless a notification prompt is actually
+   * pending; a click that already landed keeps its answer (the kill finds
+   * no child, the stale request is dropped on success).
+   */
+  function requestConfirmResend(): void {
+    if (!useNotifyConfirm || finished || !confirmPending) return;
+    if (pendingChild === undefined) return;
+    confirmResendRequested = true;
+    killPendingNotifier();
+  }
+
   function removeToast(): void {
     if (!useNotify && !useNotifyConfirm) return;
     try {
-      execFileCallback('terminal-notifier', ['-remove', GROUP_ID], () => undefined);
+      execFileCallback('terminal-notifier', ['-remove', flags.notifyGroup], () => undefined);
     } catch {
       // Best-effort cleanup: ignore delivery/removal failures on exit.
     }
@@ -245,6 +293,67 @@ export function startDriver(
   }
 
   const confirmFn = createStdinConfirmer(getReadline, () => finished);
+  const askStartLine = createStdinAsker(getReadline, () => finished);
+
+  /**
+   * Resolve the starting phase. An explicit `--start` always wins; without
+   * one, a confirm gate asks once at startup (stdin `--confirm`: empty =
+   * Focus; `--notify-confirm`: blocking 3-action toast, click = Focus) so
+   * any phase can open the run without a flag. No gate starts in focus.
+   * Returns `undefined` when SIGINT/EOF aborts the menu (the SIGINT path
+   * already printed the summary and settled the driver).
+   */
+  async function resolveInitialPhase(): Promise<Phase | undefined> {
+    if (flags.startPhase !== undefined) return flags.startPhase;
+    if (!gating) return 'focus';
+    if (useNotifyConfirm) {
+      confirmPending = true;
+      try {
+        if (finished) return undefined;
+        // Single bell before the first toast only (transition parity);
+        // re-sends after @CLOSED/@TIMEOUT stay silent.
+        ring();
+        const title = buildNotifyStartTitle();
+        const message = buildNotifyStartMessage(config, names);
+        const chooser = createNotificationStartChooser(notifyExec, {
+          title,
+          message,
+          group: flags.notifyGroup,
+          names,
+          isFinished: () => finished,
+        });
+        const chosen = await chooser(message);
+        if (finished || chosen === undefined) return undefined;
+        return chosen;
+      } finally {
+        if (!finished) confirmPending = false;
+      }
+    }
+    confirmPending = true;
+    try {
+      let first = true;
+      for (;;) {
+        if (finished) return undefined;
+        if (first) {
+          // Single bell before the first prompt only (transition parity);
+          // re-prompts after invalid input stay silent.
+          ring();
+          first = false;
+        }
+        const promptAt = Date.now();
+        const menu =
+          `Choose starting phase: 1) ${phaseLabel('focus', names)} ` +
+          `2) ${phaseLabel('shortBreak', names)} ` +
+          `3) ${phaseLabel('longBreak', names)} [1] `;
+        const answer = await askStartLine(stamp(menu, promptAt));
+        if (finished || answer === undefined) return undefined;
+        const parsed = parseStartChoice(answer, names);
+        if (parsed !== undefined) return parsed;
+      }
+    } finally {
+      if (!finished) confirmPending = false;
+    }
+  }
 
   function resumeTimers(): void {
     if (finished || timer.paused) return;
@@ -273,11 +382,11 @@ export function startDriver(
         const terminalAt = Date.now();
         if (flags.live) {
           process.stdout.write(
-            `\x07\r\x1b[K${stamp(buildSummaryLine(timer.focusCount, names), terminalAt)}\n`,
+            `${bellPrefix}\r\x1b[K${stamp(buildSummaryLine(timer.focusCount, names), terminalAt)}\n`,
           );
         } else {
           process.stdout.write(
-            `\x07${stamp(buildSummaryLine(timer.focusCount, names), terminalAt)}\n`,
+            `${bellPrefix}${stamp(buildSummaryLine(timer.focusCount, names), terminalAt)}\n`,
           );
         }
         finish();
@@ -290,16 +399,22 @@ export function startDriver(
       if (useNotifyConfirm) {
         const title = buildNotifyConfirmTitle(current, names);
         const message = buildNotifyConfirmMessage(current, next, config, names, timer.focusCount);
-        process.stdout.write('\x07');
+        ring();
         const confirmer = createNotificationConfirmer(notifyExec, {
           title,
           message,
+          group: flags.notifyGroup,
           isFinished: () => finished,
+          consumeResendRequest: () => {
+            const requested = confirmResendRequested;
+            confirmResendRequested = false;
+            return requested;
+          },
         });
         confirmed = await confirmer(message);
       } else {
         const promptMsg = `${phaseLabel(current, names)} complete. Start ${phaseLabel(next, names)}? [y/n] `;
-        process.stdout.write('\x07');
+        ring();
         confirmed = await confirmFn(stamp(promptMsg, promptAt));
       }
       if (finished) return;
@@ -345,12 +460,31 @@ export function startDriver(
     // monitor (or test stub) reports locked. Default selects NoopMonitor
     // (no polling), this guard covers injected stubs in tests.
     if (!flags.screenPause) return;
+    // Raw edge first: tracked even while a confirm prompt owns the
+    // countdown, where everything below is a no-op. An unlock with a
+    // `--notify-confirm` toast pending re-sends it — the lock may have
+    // taken it off screen (Banner auto-dismiss, and the lock-time `-remove`
+    // shares the group), and the timer must not wait behind an invisible
+    // prompt. No-op for stdin `--confirm` (nothing to re-show) and whenever
+    // no prompt is pending.
+    if (state !== 'active') {
+      screenLocked = true;
+    } else {
+      const wasLocked = screenLocked;
+      screenLocked = false;
+      if (wasLocked) requestConfirmResend();
+    }
     // Countdown already frozen while awaiting an answer: lock/unlock is a no-op.
     if (finished || confirmPending) return;
     const now = Date.now();
     if (state !== 'active') {
       if (timer.paused) return;
       timer.pause('screen', now);
+      // Dismiss any toast that fired in the poll gap just before the lock
+      // was noticed: firing during a lock is the bug, lingering on the
+      // lock screen after is worse. Best-effort; ignored on failure.
+      // No-op without --notify/--notify-confirm (guarded inside).
+      removeToast();
       if (flags.live) {
         // Tidy 006: history replaces the suffix; suspend ticks while paused
         // (idle like quiet — only the 2000ms poll stays armed).
@@ -429,13 +563,13 @@ export function startDriver(
         // Terminal long break: ring + summary only. Do not start (or notify)
         // the next focus — the timer exits instead of looping.
         process.stdout.write(
-          `\x07\r\x1b[K${stamp(buildSummaryLine(timer.focusCount, names), now)}\n`,
+          `${bellPrefix}\r\x1b[K${stamp(buildSummaryLine(timer.focusCount, names), now)}\n`,
         );
         finish();
         return;
       }
       process.stdout.write(
-        `\x07\r\x1b[K${stamp(buildPhaseLine(timer, config, names, now), now)}\n`,
+        `${bellPrefix}\r\x1b[K${stamp(buildPhaseLine(timer, config, names, now), now)}\n`,
       );
       notifyEntered(before, timer.phase);
       return;
@@ -477,11 +611,15 @@ export function startDriver(
       if (!flags.loop && before === 'longBreak' && timer.phase === 'focus') {
         // Terminal long break: ring + summary only (no next-focus line).
         // Quiet never owns a `\r` row, so no leading break (live commits).
-        process.stdout.write(`\x07${stamp(buildSummaryLine(timer.focusCount, names), now)}\n`);
+        process.stdout.write(
+          `${bellPrefix}${stamp(buildSummaryLine(timer.focusCount, names), now)}\n`,
+        );
         finish();
         return;
       }
-      process.stdout.write(`\x07${stamp(buildPhaseLine(timer, config, names, now), now)}\n`);
+      process.stdout.write(
+        `${bellPrefix}${stamp(buildPhaseLine(timer, config, names, now), now)}\n`,
+      );
       notifyEntered(before, timer.phase);
       armQuietTimeout();
       return;
@@ -490,27 +628,51 @@ export function startDriver(
     void runConfirmFlow();
   }
 
-  const unsubscribe = monitor.subscribe(onScreenState);
+  let unsubscribe: () => void = () => undefined;
 
   process.on('SIGINT', onSigint);
 
-  if (flags.live) {
-    // History birth line for parity: later phases each log a full-duration
-    // line on entry, so the first phase must too — otherwise scrollback
-    // shows only its 0:01 death fossil. No bell (startup is not a transition).
-    const startedAt = Date.now();
-    commitLiveLine(stamp(buildPhaseLine(timer, config, names, startedAt), startedAt));
-    render(buildPhaseLine(timer, config, names, startedAt));
-    notifyEntered(undefined, timer.phase);
-    interval = setInterval(() => {
-      void onLiveTick();
-    }, 250);
-  } else {
-    const startedAt = Date.now();
-    process.stdout.write(`${stamp(buildPhaseLine(timer, config, names, startedAt), startedAt)}\n`);
-    notifyEntered(undefined, timer.phase);
-    armQuietTimeout();
-  }
+  void (async () => {
+    const initial = await resolveInitialPhase();
+    if (finished || initial === undefined) return;
+    // Anchor the first deadline to the answer moment: menu dwell must not
+    // eat into the first phase (startup parity with frozen gating, 003a).
+    timer.start(Date.now(), initial);
+    // Reset the wake-jump baseline past any menu dwell so the first live
+    // tick never mistakes choosing time for a lid-close jump (005 D6).
+    lastLiveWallMs = Date.now();
+    unsubscribe = monitor.subscribe(onScreenState);
+
+    if (flags.live) {
+      // History birth line for parity: later phases each log a full-duration
+      // line on entry, so the first phase must too — otherwise scrollback
+      // shows only its 0:01 death fossil. No bell (startup is not a transition).
+      const startedAt = Date.now();
+      commitLiveLine(stamp(buildPhaseLine(timer, config, names, startedAt), startedAt));
+      render(buildPhaseLine(timer, config, names, startedAt));
+      // Start-while-locked: freeze immediately instead of running until the
+      // first poll notices (≤ POLL_MS). Paused line follows the birth line;
+      // the startup toast is skipped via the paused guard in notifyEntered,
+      // so nothing fires on the lock screen. No-op when active/opted out.
+      onScreenState(monitor.getInitialState());
+      notifyEntered(undefined, timer.phase);
+      if (!timer.paused) {
+        interval = setInterval(() => {
+          void onLiveTick();
+        }, 250);
+      }
+    } else {
+      const startedAt = Date.now();
+      process.stdout.write(
+        `${stamp(buildPhaseLine(timer, config, names, startedAt), startedAt)}\n`,
+      );
+      // Same start-while-locked freeze as the live path (armQuietTimeout
+      // already stays idle while paused).
+      onScreenState(monitor.getInitialState());
+      notifyEntered(undefined, timer.phase);
+      armQuietTimeout();
+    }
+  })();
 
   return done;
 }
