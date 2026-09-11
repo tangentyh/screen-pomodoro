@@ -12,6 +12,8 @@ export interface PomodoroConfig {
 export interface PomodoroTimer {
   readonly phase: Phase;
   readonly focusCount: number;
+  readonly shortBreakCount: number;
+  readonly longBreakCount: number;
   readonly paused: boolean;
   readonly pausedReason: PauseReason | undefined;
   readonly endsAtMs: number;
@@ -115,6 +117,8 @@ export function parseStartPhase(raw: string): Phase {
 export function createTimer(config: PomodoroConfig): PomodoroTimer {
   let phase: Phase = 'focus';
   let focusCount = 0;
+  let shortBreakCount = 0;
+  let longBreakCount = 0;
   let endsAtMs = 0;
   let paused = false;
   let pausedReason: PauseReason | undefined = undefined;
@@ -136,6 +140,12 @@ export function createTimer(config: PomodoroConfig): PomodoroTimer {
     get focusCount(): number {
       return focusCount;
     },
+    get shortBreakCount(): number {
+      return shortBreakCount;
+    },
+    get longBreakCount(): number {
+      return longBreakCount;
+    },
     get paused(): boolean {
       return paused;
     },
@@ -149,6 +159,8 @@ export function createTimer(config: PomodoroConfig): PomodoroTimer {
     start(nowMs: number, initialPhase: Phase = 'focus'): void {
       phase = initialPhase;
       focusCount = 0;
+      shortBreakCount = 0;
+      longBreakCount = 0;
       paused = false;
       pausedReason = undefined;
       endsAtMs = nowMs + durationForPhase(config, initialPhase);
@@ -182,6 +194,10 @@ export function createTimer(config: PomodoroConfig): PomodoroTimer {
       const leaving = phase;
       if (leaving === 'focus') {
         focusCount += 1;
+      } else if (leaving === 'shortBreak') {
+        shortBreakCount += 1;
+      } else {
+        longBreakCount += 1;
       }
       const next = nextPhaseAfter(leaving, focusCount);
       phase = next;
@@ -196,6 +212,10 @@ export function createTimer(config: PomodoroConfig): PomodoroTimer {
       const leaving = phase;
       if (leaving === 'focus') {
         focusCount += 1;
+      } else if (leaving === 'shortBreak') {
+        shortBreakCount += 1;
+      } else {
+        longBreakCount += 1;
       }
       const next = nextPhaseAfter(leaving, focusCount);
       phase = next;
@@ -212,7 +232,7 @@ export function createTimer(config: PomodoroConfig): PomodoroTimer {
     restartCurrentPhase(nowMs: number): void {
       if (!started) return;
       // Full restart of the current phase (`n` in --confirm): reset the
-      // absolute deadline to a full duration, keep phase + focusCount.
+      // absolute deadline to a full duration, keep phase + counts.
       // Pure (no node: imports) so timer stays phase-enum-only per 003 D1.
       const duration = durationForPhase(config, phase);
       if (paused) {

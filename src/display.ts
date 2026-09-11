@@ -152,15 +152,27 @@ export function buildResumedLine(
 }
 
 /**
- * Build the `Completed N …` summary. Default focus name preserves today's
- * `focuses` wording; a custom `--focus-name` is used verbatim (no inflection).
+ * Build the `Completed N …` summary. Default names preserve today's
+ * `focuses` / `short breaks` / `long breaks` wording; a custom name is used
+ * verbatim (no inflection) in its own slot.
  */
 export function buildSummaryLine(
   focusCount: number,
   names: PhaseNames = DEFAULT_PHASE_NAMES,
+  shortBreakCount = 0,
+  longBreakCount = 0,
 ): string {
-  if (names.focus === DEFAULT_PHASE_NAMES.focus) {
-    return `Completed ${String(focusCount)} focuses`;
-  }
-  return `Completed ${String(focusCount)} ${names.focus}`;
+  const focusPart =
+    names.focus === DEFAULT_PHASE_NAMES.focus
+      ? `Completed ${String(focusCount)} focuses`
+      : `Completed ${String(focusCount)} ${names.focus}`;
+  const shortPart =
+    names.shortBreak === DEFAULT_PHASE_NAMES.shortBreak
+      ? `${String(shortBreakCount)} short breaks`
+      : `${String(shortBreakCount)} ${names.shortBreak}`;
+  const longPart =
+    names.longBreak === DEFAULT_PHASE_NAMES.longBreak
+      ? `${String(longBreakCount)} long breaks`
+      : `${String(longBreakCount)} ${names.longBreak}`;
+  return `${focusPart}, ${shortPart}, ${longPart}`;
 }

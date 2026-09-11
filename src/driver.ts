@@ -112,6 +112,10 @@ export function startDriver(
   const stamp = (line: string, nowMs: number): string =>
     flags.timestamp ? withTimestamp(line, nowMs) : line;
 
+  /** Exit stats: completed focuses + short/long breaks (timer is the source of truth). */
+  const summaryLine = (): string =>
+    buildSummaryLine(timer.focusCount, names, timer.shortBreakCount, timer.longBreakCount);
+
   const monitor: ScreenMonitor =
     monitorOverride ?? createScreenMonitor({ enabled: flags.screenPause ?? true });
 
@@ -282,13 +286,13 @@ export function startDriver(
     if (flags.live && !confirmPending) {
       // No live `\r` row while a confirm prompt owns the line — committing
       // there would erase the user's answer from the transcript.
-      commitLiveLine(stamp(buildSummaryLine(timer.focusCount, names), now));
+      commitLiveLine(stamp(summaryLine(), now));
     } else if (confirmPending) {
       // Prompt owns the line; break to a fresh one first.
-      process.stdout.write(`\n${stamp(buildSummaryLine(timer.focusCount, names), now)}\n`);
+      process.stdout.write(`\n${stamp(summaryLine(), now)}\n`);
     } else {
       // Quiet: cursor is always clean (no `\r` rows), so no leading break.
-      process.stdout.write(`${stamp(buildSummaryLine(timer.focusCount, names), now)}\n`);
+      process.stdout.write(`${stamp(summaryLine(), now)}\n`);
     }
     finish();
   }
@@ -381,14 +385,13 @@ export function startDriver(
         // Live commits (timers are suspended, but the last `\r` tick row is
         // still on screen); quiet appends (cursor always clean there).
         const terminalAt = Date.now();
+        // Count the expired terminal break like the auto-advance paths do
+        // (they tick before printing the summary).
+        timer.tick(terminalAt);
         if (flags.live) {
-          process.stdout.write(
-            `${bellPrefix}\r\x1b[K${stamp(buildSummaryLine(timer.focusCount, names), terminalAt)}\n`,
-          );
+          process.stdout.write(`${bellPrefix}\r\x1b[K${stamp(summaryLine(), terminalAt)}\n`);
         } else {
-          process.stdout.write(
-            `${bellPrefix}${stamp(buildSummaryLine(timer.focusCount, names), terminalAt)}\n`,
-          );
+          process.stdout.write(`${bellPrefix}${stamp(summaryLine(), terminalAt)}\n`);
         }
         finish();
         return;
@@ -564,9 +567,7 @@ export function startDriver(
       if (!flags.loop && before === 'longBreak' && timer.phase === 'focus') {
         // Terminal long break: ring + summary only. Do not start (or notify)
         // the next focus — the timer exits instead of looping.
-        process.stdout.write(
-          `${bellPrefix}\r\x1b[K${stamp(buildSummaryLine(timer.focusCount, names), now)}\n`,
-        );
+        process.stdout.write(`${bellPrefix}\r\x1b[K${stamp(summaryLine(), now)}\n`);
         finish();
         return;
       }
@@ -613,9 +614,7 @@ export function startDriver(
       if (!flags.loop && before === 'longBreak' && timer.phase === 'focus') {
         // Terminal long break: ring + summary only (no next-focus line).
         // Quiet never owns a `\r` row, so no leading break (live commits).
-        process.stdout.write(
-          `${bellPrefix}${stamp(buildSummaryLine(timer.focusCount, names), now)}\n`,
-        );
+        process.stdout.write(`${bellPrefix}${stamp(summaryLine(), now)}\n`);
         finish();
         return;
       }

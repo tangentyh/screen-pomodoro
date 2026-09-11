@@ -70,8 +70,10 @@ Options:
 
 Custom names appear in every phase line, pause/resume notice, confirm prompt,
 and summary (`--focus-name "Deep work"` → `Deep work 1/4`,
-`Completed 3 Deep work`). Names must be non-empty after trimming, at most 40
-characters, with no control characters.
+`Completed 3 Deep work, 2 Coffee, 1 Lunch`). Names must be non-empty after trimming, at most 40
+characters, with no control characters. The exit summary always reports
+completed focuses plus short and long breaks
+(`Completed 2 focuses, 1 short breaks, 0 long breaks`).
 
 With `--confirm`, each deadline rings once (unless `--no-bell`) and asks:
 
