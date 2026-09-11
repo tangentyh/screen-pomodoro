@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-09-11
+
+### Added
+
+- Exit summary now reports completed short and long breaks alongside focuses (`Completed 2 focuses, 1 short breaks, 0 long breaks`), using custom `--focus-name` / `--short-name` / `--long-name` labels verbatim in their own slots. The terminal long break under a confirm gate now counts like the auto-advance paths do.
+
 ## [0.4.0] - 2026-09-10
 
 ### Changed
