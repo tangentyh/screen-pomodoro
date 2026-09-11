@@ -25,5 +25,6 @@
 
 ## Conventions
 
+- Push to `main` is prohibited by a GitHub ruleset — always work on a feature branch and open a PR.
 - Read the relevant record in `docs/000-index.md` before changing that area.
 - Done = `npm run verify` green (same gate CI runs).
