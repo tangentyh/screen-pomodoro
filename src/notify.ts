@@ -236,6 +236,23 @@ export async function checkNotifierAvailable(exec: ExecFileFn = defaultExec): Pr
   }
 }
 
+/**
+ * Presence probe for the Clear-All resend handshake (012): `terminal-notifier
+ * -list <group>` prints a header row plus one row per delivered toast in the
+ * group, and prints nothing when the group is empty. Notification Center's
+ * "Clear All" (and any other external removal) drops the delivered rows
+ * without notifying a waiting `-action` child, so this probe is the only way
+ * to notice the toast is gone. Rejects on exec failure — callers must treat
+ * an unknown answer as "still delivered" and never resend on it.
+ */
+export async function isNotificationDelivered(
+  exec: ExecFileFn = defaultExec,
+  group: string = GROUP_ID,
+): Promise<boolean> {
+  const result = await exec(NOTIFIER_BIN, ['-list', group]);
+  return result.stdout.trim().length > 0;
+}
+
 /** Fire-and-forget delivery: resolves void, never rejects (logs one stderr line). */
 export async function sendNotification(
   exec: ExecFileFn = defaultExec,
