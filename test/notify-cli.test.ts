@@ -21,6 +21,7 @@
 import * as childProcess from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { run } from '../src/cli.js';
+import { CLEAR_POLL_MISSES, CLEAR_POLL_MS } from '../src/driver.js';
 import type { ScreenMonitor, ScreenState } from '../src/screen.js';
 
 // ESM module namespaces are not spy-able: stub `node:child_process` so no
@@ -110,10 +111,19 @@ function enoent(): Error & { code: unknown } {
   return Object.assign(new Error('spawn terminal-notifier ENOENT'), { code: 'ENOENT' });
 }
 
+/** Delivered-row stub for the 012 Clear-All probe (`-list <group>` non-empty). */
+const LIST_PRESENT_OUTPUT =
+  'GroupID\tTitle\tSubtitle\tMessage\tDelivered At\n' +
+  'screen-pomodoro\tFocus complete\t\tClick for Short break\t2026-01-01 00:00:00 +0000';
+
 /** Binary present: `-version` ok, deliveries ok, `-action` answers from queue. */
-function mockBinaryAvailable(answers: (string | Error)[] = []): { deliveries: string[][] } {
+function mockBinaryAvailable(answers: (string | Error)[] = []): {
+  deliveries: string[][];
+  setListPresent: (present: boolean) => void;
+} {
   const deliveries: string[][] = [];
   const queue = [...answers];
+  let listPresent = true;
   mockedExecFile().mockImplementation((...callArgs: unknown[]) => {
     const [file, rawArgs, ...rest] = callArgs as [unknown, string[], ...unknown[]];
     void file;
@@ -121,6 +131,10 @@ function mockBinaryAvailable(answers: (string | Error)[] = []): { deliveries: st
     const cb = callbackOf(rest);
     if (argv.includes('-version')) {
       queueMicrotask(() => cb(null, '3.1.0', ''));
+      return {};
+    }
+    if (argv.includes('-list')) {
+      queueMicrotask(() => cb(null, listPresent ? LIST_PRESENT_OUTPUT : '', ''));
       return {};
     }
     if (argv.includes('-action')) {
@@ -133,7 +147,12 @@ function mockBinaryAvailable(answers: (string | Error)[] = []): { deliveries: st
     queueMicrotask(() => cb(null, '', ''));
     return {};
   });
-  return { deliveries };
+  return {
+    deliveries,
+    setListPresent: (present: boolean): void => {
+      listPresent = present;
+    },
+  };
 }
 
 /** Binary missing: every call fails with ENOENT (startup probe included). */
@@ -152,10 +171,12 @@ function mockBinaryManual(): {
   answerNext: (stdout: string) => void;
   failNext: (err: Error) => void;
   confirmCalls: () => number;
+  setListPresent: (present: boolean) => void;
 } {
   const deliveries: string[][] = [];
   const confirmArgvs: string[][] = [];
   const pending: ExecCallback[] = [];
+  let listPresent = true;
   mockedExecFile().mockImplementation((...callArgs: unknown[]) => {
     const [file, rawArgs, ...rest] = callArgs as [unknown, string[], ...unknown[]];
     void file;
@@ -163,6 +184,10 @@ function mockBinaryManual(): {
     const cb = callbackOf(rest);
     if (argv.includes('-version')) {
       queueMicrotask(() => cb(null, '3.1.0', ''));
+      return {};
+    }
+    if (argv.includes('-list')) {
+      queueMicrotask(() => cb(null, listPresent ? LIST_PRESENT_OUTPUT : '', ''));
       return {};
     }
     if (argv.includes('-action')) {
@@ -198,6 +223,9 @@ function mockBinaryManual(): {
       if (cb) cb(err);
     },
     confirmCalls: (): number => confirmArgvs.length,
+    setListPresent: (present: boolean): void => {
+      listPresent = present;
+    },
   };
 }
 
@@ -732,6 +760,140 @@ describe('004 step 2 — --notify-confirm blocking gate', () => {
   });
 });
 
+describe('012 — Clear All re-sends a pending --notify-confirm toast', () => {
+  let sigintBaseline = 0;
+
+  beforeEach(() => {
+    sigintBaseline = process.listenerCount('SIGINT');
+    mockedExecFile().mockClear();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+    setStdoutIsTTY(originalStdoutIsTTY);
+    setStdinIsTTY(originalStdinIsTTY);
+    setPlatform(originalPlatform);
+    expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
+  });
+
+  const baseArgs = [
+    '--focus',
+    '1s',
+    '--short',
+    '60s',
+    '--long',
+    '60s',
+    '--quiet',
+    '--notify-confirm',
+    // 009: pin --start focus so the startup toast menu is skipped.
+    '--start',
+    'focus',
+  ];
+
+  it('re-sends the identical toast once `-list` confirms the group is gone', async () => {
+    vi.useFakeTimers();
+    setPlatform('darwin');
+    setStdinIsTTY(false);
+    const manual = mockBinaryManual();
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const runPromise = run(baseArgs);
+    try {
+      await advance(0);
+      await advance(1_200);
+      expect(manual.confirmCalls()).toBe(1);
+      const bellsBefore = countBells(stdoutText(out));
+      // Clear All: macOS removes the delivered toast in bulk, so the blocking
+      // child never gets the `@CLOSED` it would for a single dismiss.
+      manual.setListPresent(false);
+      await advance(CLEAR_POLL_MS * CLEAR_POLL_MISSES + CLEAR_POLL_MS);
+      // The watchdog killed the stranded child and the confirmer re-sent the
+      // same argv (same -group, replaces in place) — silently.
+      expect(manual.confirmCalls()).toBe(2);
+      expect(manual.confirmArgvs[1]).toEqual(manual.confirmArgvs[0]);
+      expect(countBells(stdoutText(out))).toBe(bellsBefore);
+      // The re-sent toast still answers exactly once.
+      manual.answerNext('@ACTIONCLICKED');
+      await advance(0);
+      expect(stdoutText(out)).toContain('Short break');
+      expect(manual.confirmCalls()).toBe(2);
+    } finally {
+      process.emit('SIGINT');
+      await expect(runPromise).resolves.toBe(0);
+    }
+  });
+
+  it('one empty probe is not enough (post-toast registration race)', async () => {
+    vi.useFakeTimers();
+    setPlatform('darwin');
+    setStdinIsTTY(false);
+    const manual = mockBinaryManual();
+    vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const runPromise = run(baseArgs);
+    try {
+      await advance(0);
+      await advance(1_200);
+      expect(manual.confirmCalls()).toBe(1);
+      manual.setListPresent(false);
+      await advance(CLEAR_POLL_MS); // one miss
+      expect(manual.confirmCalls()).toBe(1);
+      manual.setListPresent(true); // a later probe sees it delivered again
+      await advance(CLEAR_POLL_MS);
+      expect(manual.confirmCalls()).toBe(1);
+      manual.setListPresent(false);
+      await advance(CLEAR_POLL_MS); // miss 1
+      await advance(CLEAR_POLL_MS); // miss 2 → resend
+      expect(manual.confirmCalls()).toBe(2);
+    } finally {
+      process.emit('SIGINT');
+      await expect(runPromise).resolves.toBe(0);
+    }
+  });
+
+  it('a failed probe is treated as unknown and never re-sends', async () => {
+    vi.useFakeTimers();
+    setPlatform('darwin');
+    setStdinIsTTY(false);
+    const confirmArgvsSeen: string[][] = [];
+    const pending: ((stdout: string) => void)[] = [];
+    mockedExecFile().mockImplementation((...callArgs: unknown[]) => {
+      const [, rawArgs, ...rest] = callArgs as [unknown, string[], ...unknown[]];
+      const argv = [...rawArgs];
+      const cb = callbackOf(rest);
+      if (argv.includes('-version')) {
+        queueMicrotask(() => cb(null, '3.1.0', ''));
+        return {};
+      }
+      if (argv.includes('-list')) {
+        queueMicrotask(() => cb(Object.assign(new Error('no GUI session'), { code: 4 })));
+        return {};
+      }
+      if (argv.includes('-action')) {
+        confirmArgvsSeen.push(argv);
+        pending.push((stdout: string): void => cb(null, stdout, ''));
+        return {};
+      }
+      queueMicrotask(() => cb(null, '', ''));
+      return {};
+    });
+    const errOut = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const runPromise = run(baseArgs);
+    try {
+      await advance(0);
+      await advance(1_200);
+      expect(confirmArgvsSeen).toHaveLength(1);
+      await advance(CLEAR_POLL_MS * (CLEAR_POLL_MISSES + 2));
+      expect(confirmArgvsSeen).toHaveLength(1);
+      expect(stderrText(errOut)).not.toMatch(/terminal-notifier/i);
+    } finally {
+      pending.shift()?.('@ACTIONCLICKED');
+      process.emit('SIGINT');
+      await expect(runPromise).resolves.toBe(0);
+    }
+  });
+});
+
 describe('notify + screen lock — no toast fires while locked', () => {
   let sigintBaseline = 0;
 
@@ -917,6 +1079,9 @@ describe('notify + screen lock — no toast fires while locked', () => {
       // nothing re-prompts into the lock and no bell repeats.
       stub.fire('locked');
       await advance(0);
+      // Clear All while locked must not re-fire into the lock screen (007):
+      // the watchdog skips while paused, even though `-list` would be empty.
+      manual.setListPresent(false);
       await advance(5_000);
       await advance(0);
       expect(manual.confirmCalls()).toBe(1);

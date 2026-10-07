@@ -35,6 +35,7 @@ import {
   createNotificationStartChooser,
   escapeNotifierMessage,
   GROUP_ID,
+  isNotificationDelivered,
   isNotifySupported,
   parseNotifyGroup,
   sendNotification,
@@ -280,6 +281,31 @@ describe('004 — checkNotifierAvailable (startup guard)', () => {
     });
     await expect(checkNotifierAvailable(exec as unknown as ExecFileFn)).rejects.toThrow(
       /System Settings|tccutil/i,
+    );
+  });
+});
+
+describe('012 — isNotificationDelivered (Clear-All probe)', () => {
+  it('runs `terminal-notifier -list <group>` and treats a non-empty table as delivered', async () => {
+    const exec = okExec('GroupID\tTitle\tSubtitle\tMessage\tDelivered At\nx\tFocus\t\tmsg\tnow\n');
+    await expect(isNotificationDelivered(exec, 'work')).resolves.toBe(true);
+    expect(fileOf(exec as unknown as { mock: { calls: unknown[][] } })).toBe('terminal-notifier');
+    const argv = argvOf(exec as unknown as { mock: { calls: unknown[][] } });
+    expect(argv).toContain('-list');
+    expect(argv[argv.indexOf('-list') + 1]).toBe('work');
+  });
+
+  it('treats empty output (Clear All) as not delivered', async () => {
+    const exec = okExec('');
+    await expect(isNotificationDelivered(exec, GROUP_ID)).resolves.toBe(false);
+  });
+
+  it('rejects on exec failure so callers can treat the answer as unknown', async () => {
+    const exec = vi.fn(async (): Promise<ExecResult> => {
+      throw new Error('no GUI session');
+    });
+    await expect(isNotificationDelivered(exec as unknown as ExecFileFn)).rejects.toThrow(
+      /no GUI session/,
     );
   });
 });

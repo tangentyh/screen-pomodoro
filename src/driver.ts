@@ -21,6 +21,7 @@ import {
   buildNotifyTitle,
   createNotificationConfirmer,
   createNotificationStartChooser,
+  isNotificationDelivered,
   sendNotification,
   type ExecFileFn,
 } from './notify.js';
@@ -30,6 +31,12 @@ import { createStdinAsker, createStdinConfirmer } from './confirm-stdin.js';
 
 /** Wake-jump guard threshold per 005 D6: drift beyond this probes before ticking. */
 export const JUMP_THRESHOLD_MS = 5000;
+
+/** 012: how often a pending `--notify-confirm` toast is probed for Clear All. */
+export const CLEAR_POLL_MS = 3000;
+
+/** 012: consecutive empty probes required before the toast is believed cleared. */
+export const CLEAR_POLL_MISSES = 2;
 
 export interface DriverFlags {
   loop: boolean;
@@ -136,6 +143,13 @@ export function startDriver(
    * unlock edge, consumed there (or dropped when an answer wins the race).
    */
   let confirmResendRequested = false;
+  /**
+   * Clear-All watchdog (012): a pending `--notify-confirm` toast is probed
+   * with `-list <group>` so a Notification Center "Clear All" re-sends it
+   * instead of stranding the timer behind an invisible prompt.
+   */
+  let clearWatchdog: ReturnType<typeof setInterval> | undefined;
+  let clearMisses = 0;
   // Wake-jump guard (005 D6): wall-clock of the last live tick. Quiet drift
   // is measured per-timeout via its scheduled-at stamp (see armQuietTimeout).
   let lastLiveWallMs = Date.now();
@@ -207,6 +221,52 @@ export function startDriver(
     killPendingNotifier();
   }
 
+  /**
+   * Clear-All probe (012). Notification Center's "Clear All" removes the
+   * delivered toast without emitting the `@CLOSED` a single dismiss would,
+   * so the blocking `-action` child would wait forever behind an invisible
+   * prompt. `terminal-notifier -list <group>` prints nothing once the group
+   * is empty, which is the only signal available. One empty probe can race
+   * the just-posted toast, so two consecutive empties are required; a failed
+   * probe is "unknown" and never resends. Skipped while locked (007: nothing
+   * fires on a locked screen) and whenever no child is actually waiting.
+   */
+  async function pollDelivered(): Promise<void> {
+    if (finished || !confirmPending || pendingChild === undefined || screenLocked) return;
+    let delivered: boolean;
+    try {
+      delivered = await isNotificationDelivered(notifyExec, flags.notifyGroup);
+    } catch {
+      clearMisses = 0;
+      return;
+    }
+    if (finished || !confirmPending || pendingChild === undefined || screenLocked) return;
+    if (delivered) {
+      clearMisses = 0;
+      return;
+    }
+    clearMisses += 1;
+    if (clearMisses >= CLEAR_POLL_MISSES) {
+      clearMisses = 0;
+      requestConfirmResend();
+    }
+  }
+
+  function startClearWatchdog(): void {
+    stopClearWatchdog();
+    clearWatchdog = setInterval(() => {
+      void pollDelivered();
+    }, CLEAR_POLL_MS);
+  }
+
+  function stopClearWatchdog(): void {
+    if (clearWatchdog !== undefined) {
+      clearInterval(clearWatchdog);
+      clearWatchdog = undefined;
+    }
+    clearMisses = 0;
+  }
+
   function removeToast(): void {
     if (!useNotify && !useNotifyConfirm) return;
     try {
@@ -272,6 +332,7 @@ export function startDriver(
     if (finished) return;
     finished = true;
     killPendingNotifier();
+    stopClearWatchdog();
     clearTimers();
     closeReadline();
     process.removeListener('SIGINT', onSigint);
@@ -416,7 +477,12 @@ export function startDriver(
             return requested;
           },
         });
-        confirmed = await confirmer(message);
+        startClearWatchdog();
+        try {
+          confirmed = await confirmer(message);
+        } finally {
+          stopClearWatchdog();
+        }
       } else {
         const promptMsg = `${phaseLabel(current, names)} complete. Start ${phaseLabel(next, names)}? [y/n] `;
         ring();
