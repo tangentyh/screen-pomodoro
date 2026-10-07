@@ -5,17 +5,22 @@ updates:
     schedule:
       interval: weekly
     groups:
-      minor-and-patch:
-        update-types:
-          - minor
-          - patch
-      # vitest and @vitest/coverage-v8 are peer-coupled: bumping one major
-      # without the other breaks `npm ci` (ERESOLVE), so they always ride
-      # together — majors included.
+      # This group must stay FIRST. Dependabot puts a dependency in the first
+      # group it matches, so with minor-and-patch listed first it swallows
+      # minor/patch vitest bumps and can split them from their peer, breaking
+      # `npm ci` with ERESOLVE (this happened in #15).
+      #
+      # vitest and @vitest/coverage-v8 are peer-coupled — coverage-v8 pins an
+      # exact vitest version — so they must always update in the same PR,
+      # majors included.
       vitest:
         patterns:
           - vitest
           - '@vitest/*'
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
     ignore:
       # No released typescript-eslint supports TypeScript 7 yet (peer caps
       # TS at <6.1.0), so the TS 7 bump can never resolve. Re-enable once
