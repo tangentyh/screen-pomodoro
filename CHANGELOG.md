@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-10-07
+
+### Fixed
+
+- A pending `--notify-confirm` toast removed by Notification Center's **Clear All** is now re-sent like a single dismissal, so the timer never waits forever behind a toast that is no longer there. While a confirm toast is pending the driver probes `terminal-notifier -list <group>` every 3s; two consecutive empty reads mean it is gone and reuse the existing resend handshake (identical toast, same group, no second bell). A failed probe counts as unknown and never resends, probing is skipped while the screen is locked, and `--notify` fire-and-forget plus the startup chooser are unchanged.
+
 ## [0.5.0] - 2026-09-11
 
 ### Added
