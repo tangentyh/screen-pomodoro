@@ -13,3 +13,4 @@ Accepted records are binding — follow them, don't relitigate. Proposed records
 - `009-start-phase.md` (accepted) — `--start <phase>` opens in any phase; a confirm gate (`--confirm` or `--notify-confirm`) without `--start` asks once at startup (stdin empty = Focus; toast click = Focus); explicit `--start` skips; amends 003/004.
 - `010-no-bell.md` (accepted) — opt-in `--no-bell` silences the terminal bell (`\x07`) everywhere; default rings; `-sound Bottle` untouched; amends 004 D3.
 - `011-notify-confirm-copy.md` (accepted) — confirm toast states the proposal in the title (`<current> complete. Start <next>?`) with a verb-first `Restart <current>` button; amends 004 D6/D2/D3.
+- `012-clear-all-resend.md` (accepted) — a `--notify-confirm` toast removed by Notification Center's Clear All is re-sent via a `-list <group>` probe + 007's resend handshake; `--notify` and the startup chooser unchanged; amends 004/007.

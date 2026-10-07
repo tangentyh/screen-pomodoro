@@ -130,7 +130,9 @@ brew install terminal-notifier
   (`<current> complete. Start <next>?` / `<spent> spent. Click for <next> —
 <upcoming>, Restart <current> to redo.`). Click the body to start next,
   the `Restart <current>` button to redo. Dismissing the toast re-sends it until answered (same group, no
-  stacking) — the toast equivalent of invalid stdin input. A prompt owed
+  stacking) — the toast equivalent of invalid stdin input. Clearing it from
+  Notification Center (including **Clear All**) re-sends it the same way, so
+  the timer never waits behind a toast that is no longer there. A prompt owed
   across a screen lock is likewise re-sent on unlock, so the click still
   counts exactly once. Without `--start`, one startup toast offers the
   three phases first (click = Focus) before the first phase line.
