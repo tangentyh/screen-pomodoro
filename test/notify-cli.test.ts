@@ -133,7 +133,9 @@ function mockBinaryAvailable(answers: (string | Error)[] = []): {
       return {};
     }
     if (argv.includes('-action')) {
-      const next = queue.length > 0 ? queue.shift()! : '@ACTIONCLICKED';
+      // A toast-body click reports as empty stdout on terminal-notifier 3.x:
+      // the `-execute` click action runs instead of printing `@ACTIONCLICKED`.
+      const next = queue.length > 0 ? queue.shift()! : '';
       if (next instanceof Error) queueMicrotask(() => cb(next));
       else queueMicrotask(() => cb(null, next, ''));
       return {};

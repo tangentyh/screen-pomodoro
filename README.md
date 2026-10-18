@@ -149,6 +149,12 @@ brew install terminal-notifier
   stderr note instead of hanging. A comma inside a custom phase name splits
   the notification buttons (`terminal-notifier` comma-splits `-action` with
   no escaping) — avoid commas in `--*-name` when using `--notify-confirm`.
+  A toast-body click is reported by an `-execute /bin/sleep 0.3` click action
+  instead of `@ACTIONCLICKED`, which keeps the notifier alive past macOS'
+  own activation of `terminal-notifier.app` on that click — without it the
+  app has already exited and macOS shows a stray `The application
+"terminal-notifier.app" is not open anymore.` (or `can't be opened. -609`)
+  dialog. The click still counts as exactly one answer.
 
 ## Screen lock (macOS)
 
