@@ -1,11 +1,11 @@
 /**
- * TDD red phase for docs/003-confirm-and-names.md — part 1: phase names.
+ * TDD red phase: part 1 — phase names.
  *
  * Covers the observable CLI contract only (via `run(argv)`), following
  * test/cli.test.ts patterns: `vi.useFakeTimers`, spy `stdout.write`,
  * `defineProperty(process.stdout, 'isTTY')`, assert SIGINT cleanup.
  *
- * All naming tests are expected to FAIL until 003 naming is implemented:
+ * All naming tests are expected to FAIL until custom naming is implemented:
  * `--focus-name`, `--short-name`, `--long-name` are unknown options today.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -48,7 +48,7 @@ function captureScreenListener(): { get: () => ((s: 'active' | 'locked') => void
     captured = listener;
     return () => undefined;
   };
-  // 005: driver uses PollingMonitor on darwin, NoopMonitor elsewhere/
+  // Driver uses PollingMonitor on darwin, NoopMonitor elsewhere/
   // opt-out. Spy both so the capture works regardless of backend (the real
   // poll interval hasn't fired yet for the short advances below, so no real
   // ioreg spawn interferes).
@@ -63,7 +63,7 @@ async function advance(ms: number): Promise<void> {
 
 // ---------------------------------------------------------------------------
 
-describe('003 — phase names', () => {
+describe('phase names', () => {
   let sigintBaseline = 0;
 
   beforeEach(() => {

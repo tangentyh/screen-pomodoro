@@ -1,12 +1,12 @@
 /**
- * TDD red phase for docs/003-confirm-and-names.md — part 2: confirm gate.
+ * TDD red phase: part 2 — confirm gate.
  *
  * Covers the observable CLI contract only (via `run(argv)`), following
  * test/cli.test.ts patterns: `vi.useFakeTimers`, spy `stdout.write`,
  * `defineProperty(process.stdout/stdin, 'isTTY')`, assert SIGINT cleanup.
  * Never blocks on real stdin — `node:readline` is stubbed per-test.
  *
- * All confirm tests are expected to FAIL until 003 confirm is implemented:
+ * All confirm tests are expected to FAIL until the confirm gate is implemented:
  * `--confirm` is an unknown option today (exit 1 "unknown option").
  */
 import * as readline from 'node:readline';
@@ -17,7 +17,7 @@ import { NoopMonitor, PollingMonitor } from '../src/screen.js';
 
 // ESM module namespaces are not spy-able, so stub `node:readline` via vi.mock.
 // The driver under test must use `node:readline` `createInterface` / `question()`
-// (per 003 non-goals); per-test helpers below set the mock return per test.
+// (no raw-mode input); per-test helpers below set the mock return per test.
 vi.mock('node:readline', async (importOriginal) => {
   const actual = await importOriginal<typeof readlineTypes>();
   return { ...actual, createInterface: vi.fn() };
@@ -73,7 +73,7 @@ function countBells(text: string): number {
 }
 
 // --- readline stubs ---------------------------------------------------------
-// Spec 003: driver uses `node:readline` `question()` (Enter-required), never
+// Driver uses `node:readline` `question()` (Enter-required), never
 // `setRawMode`. Tests stub `createInterface` so nothing blocks on real stdin.
 
 interface MockReadline {
@@ -134,7 +134,7 @@ function captureScreenListener(): { get: () => ((s: 'active' | 'locked') => void
     captured = listener;
     return () => undefined;
   };
-  // 005: driver uses PollingMonitor on darwin — spy both backends.
+  // Driver uses PollingMonitor on darwin — spy both backends.
   vi.spyOn(NoopMonitor.prototype, 'subscribe').mockImplementation(capture);
   vi.spyOn(PollingMonitor.prototype, 'subscribe').mockImplementation(capture);
   return { get: () => captured };
@@ -146,7 +146,7 @@ async function advance(ms: number): Promise<void> {
 
 // ---------------------------------------------------------------------------
 
-describe('003 — confirm gate', () => {
+describe('confirm gate', () => {
   let sigintBaseline = 0;
 
   beforeEach(() => {

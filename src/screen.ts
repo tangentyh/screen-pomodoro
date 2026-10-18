@@ -11,7 +11,7 @@ export interface ScreenMonitor {
   probeNow(): Promise<ScreenState>;
 }
 
-/** Poll interval per 005 D4 (amends 002's "fully idle" quiet-mode line). */
+/** Screen-lock poll interval, shared by the driver and the monitor. */
 export const POLL_MS = 2000;
 
 const IOREG_BIN = '/usr/sbin/ioreg';
@@ -40,7 +40,7 @@ const defaultProbeExec: ProbeExec = async (file, args) => {
   return { stdout: String(result.stdout), stderr: String(result.stderr) };
 };
 
-// V1 signal per 005 Behavior + D2 (whitespace-tolerant: top level pads with
+// Locked-screen signal (whitespace-tolerant: top level pads with
 // spaces `"key" = Yes`, array entries don't `"key"=Yes`).
 const LOCKED_RE = /"IOConsoleLocked"\s*=\s*Yes/;
 const DEFENSIVE_LOCKED_RE = /"CGSSessionScreenIsLocked"\s*=\s*Yes/;
@@ -87,7 +87,7 @@ export class NoopMonitor implements ScreenMonitor {
 }
 
 /**
- * 005 — macOS `ioreg` polling monitor. Injectable `execFile`-only probe
+ * macOS `ioreg` polling monitor. Injectable `execFile`-only probe
  * (argv array, never a shell string) plus injectable timers for fake-timer
  * tests; fail-open everywhere (error/parse-miss → active + note-once).
  */
@@ -105,7 +105,7 @@ export class PollingMonitor implements ScreenMonitor {
     this.probe = probe;
     this.pollMs = options.pollMs ?? POLL_MS;
     // Resolve globals at call time so `vi.spyOn(globalThis, …)` and fake
-    // timers observe the calls; custom fns stay injectable per 005.
+    // timers observe the calls; custom fns stay injectable.
     this.setIntervalFn =
       options.setIntervalFn ??
       ((callback: () => void, ms: number) => globalThis.setInterval(callback, ms));
@@ -186,7 +186,7 @@ export interface CreateScreenMonitorOptions {
 }
 
 /**
- * Backend selector per 005: `enabled === false` (the `--no-screen-pause`
+ * Backend selector: `enabled === false` (the `--no-screen-pause`
  * path) → `NoopMonitor`; otherwise `darwin` → `PollingMonitor`, anything
  * else → `NoopMonitor`. Defaults to `process.platform` / `true`.
  */

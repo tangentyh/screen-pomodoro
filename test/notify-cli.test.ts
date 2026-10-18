@@ -1,5 +1,5 @@
 /**
- * TDD red phase for docs/004-desktop-notifications-macos.md — step 2: driver wiring.
+ * TDD red phase: step 2 — notification driver wiring.
  *
  * Covers the `src/cli.ts` observable contract only (via `run(argv)`),
  * following test/confirm.test.ts patterns: `vi.useFakeTimers`, spy
@@ -7,7 +7,7 @@
  * `process.platform`, mock `node:child_process.execFile` (never spawn the
  * real `terminal-notifier` binary, never block on real stdin).
  *
- * All tests are expected to FAIL until 004 step 2 lands in the driver:
+ * All tests are expected to FAIL until the driver wires notifications:
  * `--notify` / `--notify-confirm` are unknown options today (exit 1
  * "unknown option"), so help/guards/flow assertions below all miss.
  *
@@ -111,7 +111,7 @@ function enoent(): Error & { code: unknown } {
   return Object.assign(new Error('spawn terminal-notifier ENOENT'), { code: 'ENOENT' });
 }
 
-/** Delivered-row stub for the 012 Clear-All probe (`-list <group>` non-empty). */
+/** Delivered-row stub for the Clear-All probe (`-list <group>` non-empty). */
 const LIST_PRESENT_OUTPUT =
   'GroupID\tTitle\tSubtitle\tMessage\tDelivered At\n' +
   'screen-pomodoro\tFocus complete\t\tClick for Short break\t2026-01-01 00:00:00 +0000';
@@ -242,7 +242,7 @@ function allArgvs(): string[][] {
 
 // ---------------------------------------------------------------------------
 
-describe('004 step 2 — flags and fail-fast guards', () => {
+describe('notify flags and fail-fast guards', () => {
   let sigintBaseline = 0;
 
   beforeEach(() => {
@@ -341,7 +341,7 @@ describe('004 step 2 — flags and fail-fast guards', () => {
     expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
   });
 
-  it('--notify-confirm works with stdin.isTTY === false (003 guard is --confirm-only)', async () => {
+  it('--notify-confirm works with stdin.isTTY === false (the guard is --confirm-only)', async () => {
     vi.useFakeTimers();
     setPlatform('darwin');
     setStdinIsTTY(false);
@@ -366,7 +366,7 @@ describe('004 step 2 — flags and fail-fast guards', () => {
   });
 });
 
-describe('004 step 2 — --notify fire-and-forget (no gating change)', () => {
+describe('--notify fire-and-forget (no gating change)', () => {
   let sigintBaseline = 0;
 
   beforeEach(() => {
@@ -546,7 +546,7 @@ describe('004 step 2 — --notify fire-and-forget (no gating change)', () => {
       '--notify-confirm',
       '--notify-group',
       'stretch',
-      // 009: pin --start focus so the startup toast menu is skipped.
+      // Pin --start focus so the startup toast menu is skipped.
       '--start',
       'focus',
     ]);
@@ -560,7 +560,7 @@ describe('004 step 2 — --notify fire-and-forget (no gating change)', () => {
   });
 });
 
-describe('004 step 2 — --notify-confirm blocking gate', () => {
+describe('--notify-confirm blocking gate', () => {
   let sigintBaseline = 0;
 
   beforeEach(() => {
@@ -594,7 +594,7 @@ describe('004 step 2 — --notify-confirm blocking gate', () => {
       '4',
       '--quiet',
       '--notify-confirm',
-      // 009: pin --start focus so the startup toast menu is skipped.
+      // Pin --start focus so the startup toast menu is skipped.
       '--start',
       'focus',
     ]);
@@ -605,7 +605,7 @@ describe('004 step 2 — --notify-confirm blocking gate', () => {
     expect(stdoutText(out)).toContain('Short break');
     // Single pre-prompt bell (stdin parity) alongside -sound Bottle.
     expect(countBells(stdoutText(out))).toBe(1);
-    // Blocking prompt carries -action Restart with the 011 click-mapping copy.
+    // Blocking prompt carries -action Restart with the click-mapping copy.
     const prompted = confirmArgvs()[0] ?? [];
     expect(prompted).toContain('-action');
     expect(prompted).toContain('Restart Focus');
@@ -637,7 +637,7 @@ describe('004 step 2 — --notify-confirm blocking gate', () => {
       '4',
       '--quiet',
       '--notify-confirm',
-      // 009: pin --start focus so the startup toast menu is skipped.
+      // Pin --start focus so the startup toast menu is skipped.
       '--start',
       'focus',
     ]);
@@ -674,7 +674,7 @@ describe('004 step 2 — --notify-confirm blocking gate', () => {
       '60s',
       '--quiet',
       '--notify-confirm',
-      // 009: pin --start focus so the startup toast menu is skipped.
+      // Pin --start focus so the startup toast menu is skipped.
       '--start',
       'focus',
     ]);
@@ -707,7 +707,7 @@ describe('004 step 2 — --notify-confirm blocking gate', () => {
       '60s',
       '--quiet',
       '--notify-confirm',
-      // 009: pin --start focus so the startup toast menu is skipped.
+      // Pin --start focus so the startup toast menu is skipped.
       '--start',
       'focus',
     ]);
@@ -744,7 +744,7 @@ describe('004 step 2 — --notify-confirm blocking gate', () => {
       '--quiet',
       '--no-loop',
       '--notify-confirm',
-      // 009: pin --start focus so the startup toast menu is skipped.
+      // Pin --start focus so the startup toast menu is skipped.
       '--start',
       'focus',
     ]);
@@ -760,7 +760,7 @@ describe('004 step 2 — --notify-confirm blocking gate', () => {
   });
 });
 
-describe('012 — Clear All re-sends a pending --notify-confirm toast', () => {
+describe('Clear All re-sends a pending --notify-confirm toast', () => {
   let sigintBaseline = 0;
 
   beforeEach(() => {
@@ -786,7 +786,7 @@ describe('012 — Clear All re-sends a pending --notify-confirm toast', () => {
     '60s',
     '--quiet',
     '--notify-confirm',
-    // 009: pin --start focus so the startup toast menu is skipped.
+    // Pin --start focus so the startup toast menu is skipped.
     '--start',
     'focus',
   ];
@@ -1062,7 +1062,7 @@ describe('notify + screen lock — no toast fires while locked', () => {
         '4',
         '--quiet',
         '--notify-confirm',
-        // 009: pin --start focus so the startup toast menu is skipped.
+        // Pin --start focus so the startup toast menu is skipped.
         '--start',
         'focus',
       ],
@@ -1079,7 +1079,7 @@ describe('notify + screen lock — no toast fires while locked', () => {
       // nothing re-prompts into the lock and no bell repeats.
       stub.fire('locked');
       await advance(0);
-      // Clear All while locked must not re-fire into the lock screen (007):
+      // Clear All while locked must not re-fire into the lock screen:
       // the watchdog skips while paused, even though `-list` would be empty.
       manual.setListPresent(false);
       await advance(5_000);

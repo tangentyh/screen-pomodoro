@@ -29,7 +29,7 @@ export interface PomodoroTimer {
 
 /**
  * Nominal duration of a phase from config. Pure switch (no math change) —
- * the shared lookup for both the timer core and the notify builders (004 D10),
+ * the shared lookup for both the timer core and the notify builders,
  * so spent/upcoming clocks never inflate with pause/gating/overshoot (D7).
  */
 export function phaseDurationMs(config: PomodoroConfig, phase: Phase): number {
@@ -233,7 +233,7 @@ export function createTimer(config: PomodoroConfig): PomodoroTimer {
       if (!started) return;
       // Full restart of the current phase (`n` in --confirm): reset the
       // absolute deadline to a full duration, keep phase + counts.
-      // Pure (no node: imports) so timer stays phase-enum-only per 003 D1.
+      // Pure (no node: imports) so timer stays phase-enum-only.
       const duration = durationForPhase(config, phase);
       if (paused) {
         frozenRemainingMs = duration;

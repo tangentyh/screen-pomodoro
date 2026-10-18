@@ -2,7 +2,7 @@
 
 ## What this is
 
-`screen-pomodoro` — tiny CLI pomodoro timer (strict ESM TypeScript, Node ≥ 22, `commander`, Vitest). Loops focus → breaks, pauses on screen lock, with `--confirm` gate, custom phase names, `--quiet` mode. CLI surface is in `README.md`; binding designs in `docs/000-index.md`.
+`screen-pomodoro` — tiny CLI pomodoro timer (strict ESM TypeScript, Node ≥ 22, `commander`, Vitest). Loops focus → breaks, pauses on screen lock, with `--confirm` gate, custom phase names, `--quiet` mode. CLI surface is in `README.md`.
 
 ## Layout
 
@@ -26,5 +26,4 @@
 ## Conventions
 
 - Push to `main` is prohibited by a GitHub ruleset — always work on a feature branch and open a PR.
-- Read the relevant record in `docs/000-index.md` before changing that area.
 - Done = `npm run verify` green (same gate CI runs).

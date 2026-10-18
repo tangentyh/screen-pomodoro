@@ -67,7 +67,7 @@ describe('cli', () => {
     expect(outputOf(errOut)).toContain('unknown option');
   });
 
-  // --- docs/002-pomodoro-cli-plan.md: CLI surface ---
+  // --- CLI surface ---
 
   it('lists pomodoro options in help', async () => {
     const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
@@ -126,7 +126,7 @@ describe('cli', () => {
     expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
   });
 
-  // --- docs/002-pomodoro-cli-plan.md: timing / display / driver ---
+  // --- timing / display / driver ---
 
   it('bare run starts the live driver and exits 0 with a summary on SIGINT', async () => {
     vi.useFakeTimers();
@@ -204,7 +204,7 @@ describe('cli', () => {
     const runPromise = run(['--focus', '1s', '--short', '1s', '--long', '1s']);
     await vi.advanceTimersByTimeAsync(0);
     expect(setTimeoutSpy).toHaveBeenCalled();
-    // 005: quiet still polls for screen lock (2000ms) on darwin, but never
+    // Quiet still polls for screen lock (2000ms) on darwin, but never
     // arms the live 250ms countdown. Filter by interval ms, not any call.
     const intervals = setIntervalSpy.mock.calls
       .map((call) => call[1])
