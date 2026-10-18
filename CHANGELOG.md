@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Clicking a `--notify-confirm` toast body no longer makes macOS show its own `The application "terminal-notifier.app" is not open anymore.` / `can't be opened. -609` dialog. A body click makes macOS activate the notifying bundle (`oapp` → `aevt`/`rapp`), but the waiting `terminal-notifier` printed the answer and exited within a few milliseconds, so that activation landed on a dying process (CoreServicesUIAgent `LAUNCH: Launch failed in CSUI … ErrorCode -600`/`-609`). Interactive toasts (confirm prompt and startup chooser) now carry an `-execute /bin/sleep 0.3` click action: `-execute` runs on the click instead of printing `@ACTIONCLICKED`, and the child only exits after the command finishes, so the app outlives the activation request. A body click reports as empty stdout and still counts as exactly one answer; `@ACTIONCLICKED` stays mapped for builds without a click action.
+
 ## [0.5.1] - 2026-10-07
 
 ### Fixed

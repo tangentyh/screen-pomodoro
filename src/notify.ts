@@ -24,6 +24,40 @@ import {
 export const GROUP_ID = 'screen-pomodoro';
 export const SOUND = 'Bottle';
 
+/**
+ * Stay of execution for a toast-body click: how long the waiting
+ * `terminal-notifier` child is kept alive after it has been answered.
+ * See {@link BODY_CLICK_LINGER_COMMAND} for why this exists.
+ */
+export const BODY_CLICK_LINGER_MS = 300;
+
+/**
+ * `-execute` command for interactive toasts (the body-click action).
+ *
+ * macOS answers a body click by asking LaunchServices to *activate the
+ * notifying bundle* (`oapp` → `aevt`/`rapp`). A waiting child that reports the
+ * click as `@ACTIONCLICKED` prints and exits within a few milliseconds, so that
+ * activation lands on a dying process and CoreServicesUIAgent raises its own
+ * dialog — `The application "terminal-notifier.app" is not open anymore.` or
+ * `… can't be opened. -609` — even though the answer itself arrives fine:
+ *
+ *   NotificationCenter  [2929F704] notification clicked
+ *   CoreServicesUIAgent [launchservices:open] Found application … to open application …
+ *   launchservicesd     QUITTING: pid=46216 asn=0x0-0x408b087      (the answered child)
+ *   CoreServicesUIAgent Error … Code=-600 "procNotFound" … event 'aevt'/'rapp'
+ *   CoreServicesUIAgent LAUNCH: Launch failed in CSUI … Action = oapp
+ *
+ * `-execute` fixes both halves at once: upstream runs the click action
+ * *instead of* printing `@ACTIONCLICKED` (so a body click reports as empty
+ * stdout, exit 0), and it does not exit until the command finishes — so the
+ * sleep keeps the app alive past the activation request instead of racing it.
+ * The observed click→send window is ~15 ms; 300 ms is a 20x margin. Verified by
+ * the system log: a live (even SIGSTOPped) instance absorbs the reopen, while
+ * an exiting one produces -600/-609. Fixed command, no user input, no shell
+ * interpolation.
+ */
+export const BODY_CLICK_LINGER_COMMAND = `/bin/sleep ${(BODY_CLICK_LINGER_MS / 1000).toFixed(1)}`;
+
 const NOTIFIER_BIN = 'terminal-notifier';
 const BREW_HINT = 'terminal-notifier not found: brew install terminal-notifier';
 const PERMISSION_HINT =
@@ -158,6 +192,16 @@ function baseArgv(title: string, message: string, group: string = GROUP_ID): str
   ];
 }
 
+/**
+ * Interactive toasts only: the body-click action that keeps the child alive
+ * long enough for macOS' own activation request (see
+ * {@link BODY_CLICK_LINGER_COMMAND}). It also replaces the `@ACTIONCLICKED`
+ * report, so a body click arrives as empty stdout.
+ */
+function bodyClickArgv(): string[] {
+  return ['-execute', BODY_CLICK_LINGER_COMMAND];
+}
+
 export function buildNotifyTitle(
   entered: NotifyPhase,
   config: NotifyConfig,
@@ -270,7 +314,8 @@ export async function sendNotification(
 
 /**
  * Blocking restart-action confirmer implementing the driver `ConfirmFn` seam.
- * Click (`@ACTIONCLICKED`) = yes (start next), the restart button
+ * Click (empty output: the `-execute` body-click action; `@ACTIONCLICKED` is
+ * kept for versions without one) = yes (start next), the restart button
  * (`actionLabel`, `Restart <current>`) = no,
  * `@CLOSED`/`@TIMEOUT` = re-send the same toast (shared `-group` replaces
  * in place); anything else or a spawn error resolves `false` with a stderr
@@ -282,6 +327,7 @@ export function createNotificationConfirmer(
 ): (message: string) => Promise<boolean> {
   const argv = [
     ...baseArgv(opts.title, opts.message, opts.group ?? GROUP_ID),
+    ...bodyClickArgv(),
     '-action',
     opts.actionLabel,
   ];
@@ -310,7 +356,9 @@ export function createNotificationConfirmer(
       // An answer won: drop any resend request that raced the click, so a
       // later prompt's genuine failure still resolves `false` (never spins).
       consumeResendRequest?.();
-      if (raw === '@ACTIONCLICKED') return true;
+      // Body click: `-execute` (see BODY_CLICK_LINGER_COMMAND) reports nothing;
+      // `@ACTIONCLICKED` is what a build without a click action prints.
+      if (raw === '' || raw === '@ACTIONCLICKED') return true;
       if (raw === opts.actionLabel) return false;
       if (raw === '@CLOSED' || raw === '@TIMEOUT') continue;
       process.stderr.write(`unexpected terminal-notifier output: ${JSON.stringify(raw)}\n`);
@@ -350,7 +398,8 @@ export interface NotifyStartChooserOptions {
  * buttons (bare labels, repeated `-action` — never comma-joined; several
  * actions collapse into an Options menu on macOS and the outcome prints on
  * stdout). Mapping (trimmed): button title → `parseStartChoice` (same
- * collision order as stdin); `@ACTIONCLICKED` (body click) → focus;
+ * collision order as stdin); body click → focus (empty output from the
+ * `-execute` body-click action, `@ACTIONCLICKED` from a build without one);
  * `@CLOSED`/`@TIMEOUT` → re-send the same toast (same `-group`, replaces in
  * place); anything else / spawn error → focus + stderr note (fallback to the
  * old default, never spins); `isFinished` → `undefined` (SIGINT abort).
@@ -365,6 +414,7 @@ export function createNotificationStartChooser(
   const names = opts.names ?? DEFAULT_PHASE_NAMES;
   const argv = [
     ...baseArgv(opts.title, opts.message, opts.group ?? GROUP_ID),
+    ...bodyClickArgv(),
     '-action',
     phaseLabel('focus', names),
     '-action',
@@ -389,7 +439,7 @@ export function createNotificationStartChooser(
         return 'focus';
       }
       if (isFinished?.() === true) return undefined;
-      if (raw === '@ACTIONCLICKED') return 'focus';
+      if (raw === '' || raw === '@ACTIONCLICKED') return 'focus';
       if (raw === '@CLOSED' || raw === '@TIMEOUT') continue;
       const parsed = parseStartChoice(raw, names);
       if (parsed !== undefined) return parsed;

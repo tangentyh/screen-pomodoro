@@ -9,6 +9,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_PHASE_NAMES, type PhaseNames } from '../src/display.js';
 import {
+  BODY_CLICK_LINGER_COMMAND,
   buildNotifyConfirmAction,
   buildNotifyConfirmMessage,
   buildNotifyConfirmTitle,
@@ -252,6 +253,23 @@ describe('createNotificationConfirmer mapping table', () => {
     await expect(confirm('ignored')).resolves.toBe(true);
   });
 
+  it('empty output (body click via the -execute click action) → true', async () => {
+    const { exec, confirm } = confirmerWith(['']);
+    await expect(confirm('ignored')).resolves.toBe(true);
+    // One spawn only: a clicked toast is answered, not re-sent.
+    expect(exec).toHaveBeenCalledTimes(1);
+  });
+
+  it('argv carries the body-click linger (-execute) so macOS does not show its own launch dialog', async () => {
+    const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const { exec, confirm } = confirmerWith(['Restart Focus']);
+    await expect(confirm('ignored')).resolves.toBe(false);
+    const argv = exec.mock.calls[0]?.[1] as string[];
+    expect(argv[argv.indexOf('-execute') + 1]).toBe(BODY_CLICK_LINGER_COMMAND);
+    // The linger answer is the empty stdout above, not a stray stderr note.
+    expect(errSpy).not.toHaveBeenCalled();
+  });
+
   it('restart button (`Restart Focus`) → false, exact label', async () => {
     const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const { confirm } = confirmerWith(['Restart Focus']);
@@ -428,6 +446,15 @@ describe('createNotificationStartChooser mapping', () => {
   it('@ACTIONCLICKED (body click) → focus (stdin empty = Focus parity)', async () => {
     const { choose } = chooserWith(['@ACTIONCLICKED']);
     await expect(choose('ignored')).resolves.toBe('focus');
+  });
+
+  it('empty output (body click via the -execute click action) → focus', async () => {
+    const { exec, choose } = chooserWith(['']);
+    await expect(choose('ignored')).resolves.toBe('focus');
+    // Same click→focus mapping as @ACTIONCLICKED, no "unexpected output" note.
+    expect(exec).toHaveBeenCalledTimes(1);
+    const argv = exec.mock.calls[0]?.[1] as string[];
+    expect(argv[argv.indexOf('-execute') + 1]).toBe(BODY_CLICK_LINGER_COMMAND);
   });
 
   it('spawn error → focus + stderr note (fallback to the old default, never spins)', async () => {
