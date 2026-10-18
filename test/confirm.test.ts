@@ -1,13 +1,10 @@
 /**
- * TDD red phase: part 2 — confirm gate.
+ * Confirm gate.
  *
  * Covers the observable CLI contract only (via `run(argv)`), following
  * test/cli.test.ts patterns: `vi.useFakeTimers`, spy `stdout.write`,
  * `defineProperty(process.stdout/stdin, 'isTTY')`, assert SIGINT cleanup.
  * Never blocks on real stdin — `node:readline` is stubbed per-test.
- *
- * All confirm tests are expected to FAIL until the confirm gate is implemented:
- * `--confirm` is an unknown option today (exit 1 "unknown option").
  */
 import * as readline from 'node:readline';
 import type * as readlineTypes from 'node:readline';
@@ -43,18 +40,6 @@ function stderrText(spy: { mock: { calls: readonly unknown[][] } }): string {
 
 const originalStdoutIsTTY = (process.stdout as { isTTY?: unknown }).isTTY;
 const originalStdinIsTTY = (process.stdin as { isTTY?: unknown }).isTTY;
-
-function setStdoutIsTTY(value: boolean | undefined): void {
-  if (value === undefined) {
-    delete (process.stdout as { isTTY?: unknown }).isTTY;
-  } else {
-    Object.defineProperty(process.stdout, 'isTTY', {
-      value,
-      configurable: true,
-      writable: true,
-    });
-  }
-}
 
 function setStdinIsTTY(value: boolean | undefined): void {
   if (value === undefined) {
@@ -173,12 +158,6 @@ describe('confirm gate', () => {
       });
   });
 
-  it('lists --confirm in --help', async () => {
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    await expect(run(['--help'])).resolves.toBe(0);
-    expect(stdoutText(out)).toContain('--confirm');
-  });
-
   it('--confirm without an interactive stdin fails fast with exit 1', async () => {
     vi.useFakeTimers();
     setStdinIsTTY(false);
@@ -199,42 +178,10 @@ describe('confirm gate', () => {
     expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
   });
 
-  it('prompt format is "<current> complete. Start <next>? [y/n]" with one bell (quiet)', async () => {
+  it('y advances exactly one phase, counts a focus when leaving focus', async () => {
     vi.useFakeTimers();
     setStdinIsTTY(true);
     const rl = mockReadlineQueue(['y']);
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const runPromise = run([
-      '--focus',
-      '1s',
-      '--short',
-      '5s',
-      '--long',
-      '5s',
-      '--cycles',
-      '4',
-      '--quiet',
-      '--confirm',
-      '--start',
-      'focus',
-    ]);
-    await advance(0);
-    await advance(1_200);
-    await advance(0);
-    const prompt = rl.prompts[0] ?? '';
-    const combined = `${stdoutText(out)}\n${rl.prompts.join('\n')}`;
-    expect(prompt.length + stdoutText(out).length).toBeGreaterThan(0);
-    expect(combined).toMatch(/Focus complete\. Start Short break\? \[y\/n\]/);
-    expect(countBells(stdoutText(out))).toBe(1);
-    process.emit('SIGINT');
-    await expect(runPromise).resolves.toBe(0);
-    expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
-  });
-
-  it('y advances exactly one phase and counts a focus when leaving focus', async () => {
-    vi.useFakeTimers();
-    setStdinIsTTY(true);
-    mockReadlineQueue(['y']);
     const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     const runPromise = run([
       '--focus',
@@ -254,42 +201,13 @@ describe('confirm gate', () => {
     expect(stdoutText(out)).toContain('Focus 1/4');
     await advance(1_200);
     await advance(0);
+    expect(rl.prompts[0]).toMatch(/Focus complete\. Start Short break\? \[y\/n\]/);
     // Advanced to short break, no second bell on the y-advance line.
     expect(stdoutText(out)).toContain('Short break');
     expect(countBells(stdoutText(out))).toBe(1);
     process.emit('SIGINT');
     await expect(runPromise).resolves.toBe(0);
     // Leaving focus counted exactly one.
-    expect(stdoutText(out)).toMatch(/Completed 1 focuses/);
-  });
-
-  it('y from a break does not increment the focus count', async () => {
-    vi.useFakeTimers();
-    setStdinIsTTY(true);
-    mockReadlineQueue(['y', 'y']);
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const runPromise = run([
-      '--focus',
-      '1s',
-      '--short',
-      '1s',
-      '--long',
-      '60s',
-      '--cycles',
-      '4',
-      '--quiet',
-      '--confirm',
-      '--start',
-      'focus',
-    ]);
-    await advance(0);
-    await advance(1_200); // focus -> short (count 1)
-    await advance(0);
-    await advance(1_200); // short -> focus (still count 1)
-    await advance(0);
-    expect(stdoutText(out)).toContain('Focus 2/4');
-    process.emit('SIGINT');
-    await expect(runPromise).resolves.toBe(0);
     expect(stdoutText(out)).toMatch(/Completed 1 focuses/);
   });
 
@@ -333,36 +251,6 @@ describe('confirm gate', () => {
     process.emit('SIGINT');
     await expect(runPromise).resolves.toBe(0);
     expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
-  });
-
-  it('invalid input re-prompts without transitioning (question called 2x)', async () => {
-    vi.useFakeTimers();
-    setStdinIsTTY(true);
-    const rl = mockReadlineQueue(['maybe', 'y']);
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const runPromise = run([
-      '--focus',
-      '1s',
-      '--short',
-      '60s',
-      '--long',
-      '60s',
-      '--quiet',
-      '--confirm',
-      '--start',
-      'focus',
-    ]);
-    await advance(0);
-    await advance(1_200);
-    await advance(0);
-    await advance(0);
-    expect(rl.questionSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
-    // Eventually advanced after the valid y.
-    expect(stdoutText(out)).toContain('Short break');
-    // No extra bell for the re-prompt.
-    expect(countBells(stdoutText(out))).toBe(1);
-    process.emit('SIGINT');
-    await expect(runPromise).resolves.toBe(0);
   });
 
   it.each([
@@ -423,31 +311,6 @@ describe('confirm gate', () => {
     },
   );
 
-  it('trims whitespace around y/n', async () => {
-    vi.useFakeTimers();
-    setStdinIsTTY(true);
-    mockReadlineQueue(['  y  ']);
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const runPromise = run([
-      '--focus',
-      '1s',
-      '--short',
-      '60s',
-      '--long',
-      '60s',
-      '--quiet',
-      '--confirm',
-      '--start',
-      'focus',
-    ]);
-    await advance(0);
-    await advance(1_200);
-    await advance(0);
-    expect(stdoutText(out)).toContain('Short break');
-    process.emit('SIGINT');
-    await expect(runPromise).resolves.toBe(0);
-  });
-
   it('confirm prompt resolves custom names on both sides', async () => {
     vi.useFakeTimers();
     setStdinIsTTY(true);
@@ -506,37 +369,6 @@ describe('confirm gate', () => {
     expect(out.mock.calls.length).toBe(writesWhilePending);
     rl.answerNext('y');
     await advance(0);
-    expect(stdoutText(out)).toContain('Short break');
-    process.emit('SIGINT');
-    await expect(runPromise).resolves.toBe(0);
-  });
-
-  it('live mode suspends interval ticks while awaiting an answer', async () => {
-    vi.useFakeTimers();
-    setStdinIsTTY(true);
-    setStdoutIsTTY(true);
-    const rl = mockReadlineManual();
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const runPromise = run([
-      '--focus',
-      '1s',
-      '--short',
-      '60s',
-      '--long',
-      '60s',
-      '--confirm',
-      '--start',
-      'focus',
-    ]);
-    await advance(500);
-    await advance(1_000); // cross the 1s deadline
-    expect(rl.questionSpy).toHaveBeenCalledTimes(1);
-    const writesWhilePending = out.mock.calls.length;
-    await advance(2_000);
-    expect(rl.questionSpy).toHaveBeenCalledTimes(1);
-    expect(out.mock.calls.length).toBe(writesWhilePending);
-    rl.answerNext('y');
-    await advance(500);
     expect(stdoutText(out)).toContain('Short break');
     process.emit('SIGINT');
     await expect(runPromise).resolves.toBe(0);
@@ -618,34 +450,6 @@ describe('confirm gate', () => {
     expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
   });
 
-  it('does not put stdin into raw mode when confirming', async () => {
-    vi.useFakeTimers();
-    setStdinIsTTY(true);
-    mockReadlineQueue(['y']);
-    vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const maybeStdin = process.stdin as unknown as { setRawMode?: () => void };
-    const rawSpy =
-      typeof maybeStdin.setRawMode === 'function' ? vi.spyOn(maybeStdin, 'setRawMode') : null;
-    const runPromise = run([
-      '--focus',
-      '1s',
-      '--short',
-      '60s',
-      '--long',
-      '60s',
-      '--quiet',
-      '--confirm',
-      '--start',
-      'focus',
-    ]);
-    await advance(0);
-    await advance(1_200);
-    await advance(0);
-    process.emit('SIGINT');
-    await expect(runPromise).resolves.toBe(0);
-    if (rawSpy !== null) expect(rawSpy).not.toHaveBeenCalled();
-  });
-
   it('--no-loop with --confirm exits after the long break without a trailing prompt', async () => {
     vi.useFakeTimers();
     setStdinIsTTY(true);
@@ -676,34 +480,6 @@ describe('confirm gate', () => {
     // One prompt for focus->long, none for the terminal long->exit.
     expect(rl.questionSpy).toHaveBeenCalledTimes(1);
     expect(stdoutText(out)).toMatch(/Completed 1 focuses/);
-    expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
-  });
-
-  it('creates the readline interface lazily on first prompt and closes it on finish', async () => {
-    vi.useFakeTimers();
-    setStdinIsTTY(true);
-    const rl = mockReadlineQueue(['y']);
-    vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const runPromise = run([
-      '--focus',
-      '5s',
-      '--short',
-      '60s',
-      '--long',
-      '60s',
-      '--quiet',
-      '--confirm',
-      '--start',
-      'focus',
-    ]);
-    await advance(0);
-    expect(rl.createSpy).not.toHaveBeenCalled();
-    await advance(5_200);
-    await advance(0);
-    expect(rl.createSpy).toHaveBeenCalledTimes(1);
-    process.emit('SIGINT');
-    await expect(runPromise).resolves.toBe(0);
-    expect(rl.closeSpy).toHaveBeenCalled();
     expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
   });
 

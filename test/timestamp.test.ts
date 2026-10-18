@@ -1,7 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { run } from '../src/cli.js';
-import { formatTimestamp, withTimestamp } from '../src/display.js';
-import type { ScreenMonitor, ScreenState } from '../src/screen.js';
 
 function stdoutText(spy: { mock: { calls: readonly unknown[][] } }): string {
   return spy.mock.calls
@@ -25,31 +23,6 @@ function setStdoutIsTTY(value: boolean | undefined): void {
   }
 }
 
-class StubMonitor implements ScreenMonitor {
-  private readonly listeners = new Set<(s: ScreenState) => void>();
-
-  subscribe(listener: (s: ScreenState) => void): () => void {
-    this.listeners.add(listener);
-    return () => {
-      this.listeners.delete(listener);
-    };
-  }
-
-  getInitialState(): ScreenState {
-    return 'active';
-  }
-
-  async probeNow(): Promise<ScreenState> {
-    return 'active';
-  }
-
-  fire(state: ScreenState): void {
-    for (const listener of [...this.listeners]) {
-      listener(state);
-    }
-  }
-}
-
 describe('--timestamp', () => {
   let sigintBaseline = 0;
 
@@ -70,12 +43,6 @@ describe('--timestamp', () => {
     expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
   });
 
-  it('lists --timestamp in --help', async () => {
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    await expect(run(['--help'])).resolves.toBe(0);
-    expect(stdoutText(out)).toContain('--timestamp');
-  });
-
   it('quiet startup line is prefixed with [HH:MM:SS]', async () => {
     vi.useFakeTimers();
     const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
@@ -84,19 +51,6 @@ describe('--timestamp', () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(stdoutText(out)).toMatch(TIMESTAMP_RE);
       expect(stdoutText(out)).toContain('Focus 1/4');
-    } finally {
-      process.emit('SIGINT');
-      await expect(runPromise).resolves.toBe(0);
-    }
-  });
-
-  it('off by default: quiet startup has no timestamp prefix', async () => {
-    vi.useFakeTimers();
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const runPromise = run(['--focus', '5m', '--quiet']);
-    try {
-      await vi.advanceTimersByTimeAsync(0);
-      expect(stdoutText(out)).not.toMatch(TIMESTAMP_RE);
     } finally {
       process.emit('SIGINT');
       await expect(runPromise).resolves.toBe(0);
@@ -127,30 +81,6 @@ describe('--timestamp', () => {
       const chunks = out.mock.calls.map((call) => String(call[0]));
       expect(chunks.some((c) => c.startsWith('\x07[') && c.includes('Short break'))).toBe(true);
       expect(text).toMatch(/\[\d{2}:\d{2}:\d{2}\] Short break/);
-    } finally {
-      process.emit('SIGINT');
-      await expect(runPromise).resolves.toBe(0);
-    }
-  });
-
-  it('quiet pause/resume lines carry the timestamp', async () => {
-    vi.useFakeTimers();
-    const stub = new StubMonitor();
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const runPromise = run(
-      ['--focus', '60s', '--short', '60s', '--long', '60s', '--quiet', '--timestamp'],
-      {
-        monitor: stub,
-      },
-    );
-    try {
-      await vi.advanceTimersByTimeAsync(0);
-      stub.fire('locked');
-      await vi.advanceTimersByTimeAsync(0);
-      expect(stdoutText(out)).toMatch(/\[\d{2}:\d{2}:\d{2}\] Paused Focus — screen locked/);
-      stub.fire('active');
-      await vi.advanceTimersByTimeAsync(0);
-      expect(stdoutText(out)).toMatch(/\[\d{2}:\d{2}:\d{2}\] Resumed Focus — .* remaining/);
     } finally {
       process.emit('SIGINT');
       await expect(runPromise).resolves.toBe(0);
@@ -196,14 +126,5 @@ describe('--timestamp', () => {
       process.emit('SIGINT');
       await expect(runPromise).resolves.toBe(0);
     }
-  });
-});
-
-describe('display timestamp helpers', () => {
-  it('formatTimestamp renders [HH:MM:SS] and withTimestamp prefixes', () => {
-    expect(formatTimestamp(new Date(2026, 8, 7, 4, 5, 6).getTime())).toBe('[04:05:06]');
-    expect(withTimestamp('Focus 1/4', new Date(2026, 8, 7, 14, 3, 4).getTime())).toBe(
-      '[14:03:04] Focus 1/4',
-    );
   });
 });

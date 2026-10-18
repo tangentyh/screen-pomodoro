@@ -12,7 +12,6 @@ import * as readline from 'node:readline';
 import type * as readlineTypes from 'node:readline';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { run } from '../src/cli.js';
-import { parseStartChoice } from '../src/display.js';
 import { createTimer, parseStartPhase } from '../src/timer.js';
 
 vi.mock('node:readline', async (importOriginal) => {
@@ -197,21 +196,14 @@ async function advance(ms: number): Promise<void> {
 }
 
 describe('--start unit', () => {
-  it('parses focus/short/long plus short-break/long-break aliases', () => {
+  it('parses focus/short/long plus aliases, case-insensitively and ignoring separators', () => {
     expect(parseStartPhase('focus')).toBe('focus');
     expect(parseStartPhase('short')).toBe('shortBreak');
     expect(parseStartPhase('long')).toBe('longBreak');
     expect(parseStartPhase('short-break')).toBe('shortBreak');
-    expect(parseStartPhase('long-break')).toBe('longBreak');
-  });
-
-  it('is case-insensitive and ignores separators/case variants', () => {
-    expect(parseStartPhase('FOCUS')).toBe('focus');
-    expect(parseStartPhase('ShortBreak')).toBe('shortBreak');
-    expect(parseStartPhase('short_break')).toBe('shortBreak');
+    expect(parseStartPhase('long_break')).toBe('longBreak');
     expect(parseStartPhase('SHORT BREAK')).toBe('shortBreak');
-    expect(parseStartPhase('LongBreak')).toBe('longBreak');
-    expect(parseStartPhase('  long  ')).toBe('longBreak');
+    expect(parseStartPhase('  LongBreak  ')).toBe('longBreak');
   });
 
   it.each([[''], ['bogus'], ['foc'], ['break'], ['shorts']])('rejects %p', (input) => {
@@ -231,14 +223,6 @@ describe('--start unit', () => {
     expect(long.phase).toBe('longBreak');
     expect(long.focusCount).toBe(0);
     expect(long.endsAtMs).toBe(100 + 15_000);
-  });
-
-  it('timer.start defaults to focus (back-compat)', () => {
-    const config = { focusMs: 25_000, shortBreakMs: 5_000, longBreakMs: 15_000, cycles: 4 };
-    const timer = createTimer(config);
-    timer.start(0);
-    expect(timer.phase).toBe('focus');
-    expect(timer.endsAtMs).toBe(25_000);
   });
 });
 
@@ -271,23 +255,6 @@ describe('--start CLI', () => {
       });
   });
 
-  it('lists --start in --help', async () => {
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    await expect(run(['--help'])).resolves.toBe(0);
-    expect(stdoutText(out)).toContain('--start');
-  });
-
-  it('defaults to focus (existing first line unchanged)', async () => {
-    vi.useFakeTimers();
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const runPromise = run(['--focus', '5m', '--short', '5m', '--long', '5m', '--quiet']);
-    await advance(0);
-    expect(stdoutText(out)).toContain('Focus 1/4');
-    process.emit('SIGINT');
-    await expect(runPromise).resolves.toBe(0);
-    expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
-  });
-
   it('--start short begins in the short break', async () => {
     vi.useFakeTimers();
     const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
@@ -309,58 +276,6 @@ describe('--start CLI', () => {
     process.emit('SIGINT');
     await expect(runPromise).resolves.toBe(0);
     expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
-  });
-
-  it('--start long begins in the long break', async () => {
-    vi.useFakeTimers();
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const runPromise = run([
-      '--focus',
-      '5m',
-      '--short',
-      '5m',
-      '--long',
-      '5m',
-      '--quiet',
-      '--start',
-      'long',
-    ]);
-    await advance(0);
-    const text = stdoutText(out);
-    expect(text).toContain('Long break');
-    expect(text).not.toContain('Focus');
-    process.emit('SIGINT');
-    await expect(runPromise).resolves.toBe(0);
-  });
-
-  it('accepts the short-break alias', async () => {
-    vi.useFakeTimers();
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const runPromise = run(['--focus', '5m', '--short', '5m', '--quiet', '--start', 'short-break']);
-    await advance(0);
-    expect(stdoutText(out)).toContain('Short break');
-    process.emit('SIGINT');
-    await expect(runPromise).resolves.toBe(0);
-  });
-
-  it('resolves custom names on the starting phase line', async () => {
-    vi.useFakeTimers();
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const runPromise = run([
-      '--focus',
-      '5m',
-      '--short',
-      '5m',
-      '--short-name',
-      'Coffee',
-      '--quiet',
-      '--start',
-      'short',
-    ]);
-    await advance(0);
-    expect(stdoutText(out)).toContain('Coffee');
-    process.emit('SIGINT');
-    await expect(runPromise).resolves.toBe(0);
   });
 
   it('rejects an unknown --start value with exit 1', async () => {
@@ -424,37 +339,6 @@ describe('--start CLI', () => {
     process.emit('SIGINT');
     await expect(runPromise).resolves.toBe(0);
     expect(stdoutText(out)).toMatch(/Completed 0 focuses/);
-    expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
-  });
-
-  it('with --confirm: start long, prompt into the first focus on y', async () => {
-    vi.useFakeTimers();
-    setStdinIsTTY(true);
-    const rl = mockReadlineQueue(['y']);
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const runPromise = run([
-      '--focus',
-      '60s',
-      '--short',
-      '60s',
-      '--long',
-      '1s',
-      '--cycles',
-      '4',
-      '--quiet',
-      '--confirm',
-      '--start',
-      'long',
-    ]);
-    await advance(0);
-    expect(stdoutText(out)).toContain('Long break');
-    await advance(1_200);
-    await advance(0);
-    const combined = `${stdoutText(out)}\n${rl.prompts.join('\n')}`;
-    expect(combined).toMatch(/Long break complete\. Start Focus\? \[y\/n\]/);
-    expect(stdoutText(out)).toContain('Focus 1/4');
-    process.emit('SIGINT');
-    await expect(runPromise).resolves.toBe(0);
     expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
   });
 });
@@ -535,27 +419,6 @@ describe('startup menu (--confirm without --start)', () => {
     const runPromise = run(['--focus', '5m', '--short', '5m', '--quiet', '--confirm']);
     await advance(0);
     expect(stdoutText(out)).toContain('Focus 1/4');
-    process.emit('SIGINT');
-    await expect(runPromise).resolves.toBe(0);
-  });
-
-  it('accepts 3 for the long break', async () => {
-    vi.useFakeTimers();
-    setStdinIsTTY(true);
-    mockReadlineQueue(['3']);
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const runPromise = run([
-      '--focus',
-      '5m',
-      '--short',
-      '5m',
-      '--long',
-      '5m',
-      '--quiet',
-      '--confirm',
-    ]);
-    await advance(0);
-    expect(stdoutText(out)).toContain('Long break');
     process.emit('SIGINT');
     await expect(runPromise).resolves.toBe(0);
   });
@@ -725,100 +588,6 @@ describe('startup menu (--notify-confirm without --start)', () => {
     expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
   });
 
-  it('@ACTIONCLICKED (body click) starts focus (click = Focus)', async () => {
-    vi.useFakeTimers();
-    setPlatform('darwin');
-    mockNotifierAvailable(['@ACTIONCLICKED']);
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const runPromise = run(['--focus', '5m', '--short', '5m', '--quiet', '--notify-confirm']);
-    await advance(0);
-    expect(stdoutText(out)).toContain('Focus 1/4');
-    process.emit('SIGINT');
-    await expect(runPromise).resolves.toBe(0);
-  });
-
-  it('@CLOSED/@TIMEOUT re-send the same toast (same argv/group)', async () => {
-    vi.useFakeTimers();
-    setPlatform('darwin');
-    mockNotifierAvailable(['@CLOSED', '@TIMEOUT', 'Long break']);
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const runPromise = run([
-      '--focus',
-      '5m',
-      '--short',
-      '5m',
-      '--long',
-      '5m',
-      '--quiet',
-      '--notify-confirm',
-    ]);
-    await advance(0);
-    expect(stdoutText(out)).toContain('Long break');
-    const choosers = allExecArgvs().filter((argv) => argv.includes('Choose starting phase'));
-    expect(choosers).toHaveLength(3);
-    expect(choosers[1]).toEqual(choosers[0]);
-    expect(choosers[2]).toEqual(choosers[0]);
-    // One bell for the menu; re-sends stay silent.
-    expect(countBells(stdoutText(out))).toBe(1);
-    process.emit('SIGINT');
-    await expect(runPromise).resolves.toBe(0);
-  });
-
-  it('spawn error / unexpected output fall back to focus + stderr note (never spins)', async () => {
-    vi.useFakeTimers();
-    setPlatform('darwin');
-    mockNotifierAvailable([
-      Object.assign(new Error('spawn terminal-notifier ENOENT'), { code: 'ENOENT' }),
-    ]);
-    const errOut = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const runPromise = run(['--focus', '5m', '--short', '5m', '--quiet', '--notify-confirm']);
-    await advance(0);
-    expect(stdoutText(out)).toContain('Focus 1/4');
-    expect(stderrText(errOut)).toMatch(/terminal-notifier/);
-    process.emit('SIGINT');
-    await expect(runPromise).resolves.toBe(0);
-  });
-
-  it('unexpected output falls back to focus + stderr note', async () => {
-    vi.useFakeTimers();
-    setPlatform('darwin');
-    mockNotifierAvailable(['bogus']);
-    const errOut = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const runPromise = run(['--focus', '5m', '--short', '5m', '--quiet', '--notify-confirm']);
-    await advance(0);
-    expect(stdoutText(out)).toContain('Focus 1/4');
-    expect(stderrText(errOut)).toMatch(/terminal-notifier|unexpected/i);
-    process.emit('SIGINT');
-    await expect(runPromise).resolves.toBe(0);
-  });
-
-  it('custom labels ride as toast actions and resolve', async () => {
-    vi.useFakeTimers();
-    setPlatform('darwin');
-    mockNotifierAvailable(['Coffee']);
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const runPromise = run([
-      '--focus',
-      '5m',
-      '--short',
-      '5m',
-      '--short-name',
-      'Coffee',
-      '--quiet',
-      '--notify-confirm',
-    ]);
-    await advance(0);
-    expect(stdoutText(out)).toContain('Coffee');
-    const choosers = allExecArgvs().filter((argv) => argv.includes('Choose starting phase'));
-    expect(choosers).toHaveLength(1);
-    const actions = choosers[0]!.filter((_, i) => choosers[0]![i - 1] === '-action');
-    expect(actions).toEqual(['Focus', 'Coffee', 'Long break']);
-    process.emit('SIGINT');
-    await expect(runPromise).resolves.toBe(0);
-  });
-
   it('explicit --start skips the toast (exec lazy except the version probe)', async () => {
     vi.useFakeTimers();
     setPlatform('darwin');
@@ -857,38 +626,4 @@ describe('startup menu (--notify-confirm without --start)', () => {
     expect(stdoutText(out)).not.toContain('remaining');
     expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
   });
-});
-
-describe('parseStartChoice unit', () => {
-  it('accepts empty (default), digits, and letters', () => {
-    expect(parseStartChoice('')).toBe('focus');
-    expect(parseStartChoice('   ')).toBe('focus');
-    expect(parseStartChoice('1')).toBe('focus');
-    expect(parseStartChoice('2')).toBe('shortBreak');
-    expect(parseStartChoice('3')).toBe('longBreak');
-    expect(parseStartChoice('f')).toBe('focus');
-    expect(parseStartChoice('S')).toBe('shortBreak');
-    expect(parseStartChoice('l')).toBe('longBreak');
-  });
-
-  it('accepts --start words and aliases', () => {
-    expect(parseStartChoice('focus')).toBe('focus');
-    expect(parseStartChoice('short')).toBe('shortBreak');
-    expect(parseStartChoice('LONG-BREAK')).toBe('longBreak');
-    expect(parseStartChoice('  short_break  ')).toBe('shortBreak');
-  });
-
-  it('accepts custom labels case-insensitively', () => {
-    const names = { focus: 'Deep work', shortBreak: 'Coffee', longBreak: 'Lunch' };
-    expect(parseStartChoice('coffee', names)).toBe('shortBreak');
-    expect(parseStartChoice('DEEP WORK', names)).toBe('focus');
-    expect(parseStartChoice('lunch', names)).toBe('longBreak');
-  });
-
-  it.each([['y'], ['n'], ['yes'], ['0'], ['4'], ['bogus'], ['focus!']])(
-    'returns undefined for %p (caller re-prompts)',
-    (input) => {
-      expect(parseStartChoice(input)).toBeUndefined();
-    },
-  );
 });

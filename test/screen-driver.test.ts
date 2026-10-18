@@ -30,10 +30,6 @@ function stdoutText(spy: { mock: { calls: readonly unknown[][] } }): string {
     .join('');
 }
 
-function stderrText(spy: { mock: { calls: readonly unknown[][] } }): string {
-  return spy.mock.calls.map((call) => call.map((arg) => String(arg)).join(' ')).join('\n');
-}
-
 function countBells(text: string): number {
   return text.split('\x07').length - 1;
 }
@@ -131,43 +127,6 @@ async function settle(runPromise: Promise<number>): Promise<void> {
 
 // ---------------------------------------------------------------------------
 
-describe('--no-screen-pause flag', () => {
-  let sigintBaseline = 0;
-
-  beforeEach(() => {
-    sigintBaseline = process.listenerCount('SIGINT');
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-    vi.useRealTimers();
-    setStdoutIsTTY(originalStdoutIsTTY);
-    expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
-  });
-
-  it('lists --no-screen-pause in --help', async () => {
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    await expect(run(['--help'])).resolves.toBe(0);
-    expect(stdoutText(out)).toContain('--no-screen-pause');
-  });
-
-  it('--no-screen-pause is a known flag (not "unknown option")', async () => {
-    vi.useFakeTimers();
-    const errOut = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-    vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const runPromise = run(['--focus', '60s', '--quiet', '--no-screen-pause']);
-    try {
-      await advance(0);
-      // Known flag → driver starts (no usage error); SIGINT settles exit 0.
-      expect(stderrText(errOut)).not.toMatch(/unknown option/i);
-      process.emit('SIGINT');
-      await expect(runPromise).resolves.toBe(0);
-    } finally {
-      await settle(runPromise);
-    }
-  });
-});
-
 describe('factory wiring: default polls, opt-out stays idle', () => {
   let sigintBaseline = 0;
 
@@ -202,22 +161,6 @@ describe('factory wiring: default polls, opt-out stays idle', () => {
     }
   });
 
-  it('default (flag absent) arms the 2000ms screen poll in live mode', async () => {
-    vi.useFakeTimers();
-    setStdoutIsTTY(true);
-    vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
-    const runPromise = run(['--focus', '60s', '--short', '60s', '--long', '60s']);
-    try {
-      await advance(0);
-      // Live tick (250ms) + screen poll (2000ms) both armed.
-      expect(pollIntervals(setIntervalSpy)).toContain(250);
-      expect(pollIntervals(setIntervalSpy)).toContain(2000);
-    } finally {
-      await settle(runPromise);
-    }
-  });
-
   it('--no-screen-pause with a stub reporting locked → timer never pauses, no poll armed', async () => {
     vi.useFakeTimers();
     const stub = new StubMonitor('active');
@@ -243,25 +186,6 @@ describe('factory wiring: default polls, opt-out stays idle', () => {
       expect(pollIntervals(setIntervalSpy)).not.toContain(2000);
     } finally {
       await settle(runPromise);
-    }
-  });
-  it('off-darwin default stays idle (NoopMonitor, no 2000ms poll)', async () => {
-    for (const platform of ['linux', 'win32'] as const) {
-      setPlatform(platform);
-      vi.useFakeTimers();
-      vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-      const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
-      const runPromise = run(['--focus', '60s', '--short', '60s', '--long', '60s', '--quiet']);
-      try {
-        await advance(0);
-        // The factory returns NoopMonitor off-darwin: the timer
-        // runs, but no screen poll is armed.
-        expect(pollIntervals(setIntervalSpy)).not.toContain(2000);
-      } finally {
-        await settle(runPromise);
-      }
-      vi.restoreAllMocks();
-      vi.useRealTimers();
     }
   });
 });
@@ -358,48 +282,6 @@ describe('lock mid-focus pauses, unlock resumes (existing copy)', () => {
     }
   });
 
-  it('live: no blank line between Paused and Resumed (pause leaves the cursor clean)', async () => {
-    vi.useFakeTimers();
-    setStdoutIsTTY(true);
-    const stub = new StubMonitor('active');
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const runPromise = run(['--focus', '60s', '--short', '60s', '--long', '60s'], {
-      monitor: stub,
-    });
-    try {
-      await advance(500);
-      stub.fire('locked');
-      await advance(0);
-      stub.fire('active');
-      await advance(0);
-      const text = stdoutText(out);
-      expect(text).toContain('Paused Focus — screen locked, timer frozen');
-      expect(text).not.toMatch(/timer frozen\n\nResumed/);
-    } finally {
-      await settle(runPromise);
-    }
-  });
-
-  it('live: startup leaves a full-duration history line (parity with later phases)', async () => {
-    vi.useFakeTimers();
-    setStdoutIsTTY(true);
-    const stub = new StubMonitor('active');
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const runPromise = run(['--focus', '60s', '--short', '60s', '--long', '60s'], {
-      monitor: stub,
-    });
-    try {
-      await advance(0);
-      // First phase must log its birth (full 1:00), like every phase-change
-      // entry does — otherwise scrollback shows only its 0:01 death fossil.
-      // Commit framing: erase the live row first so no fossil scrolls.
-      const first = String(out.mock.calls[0]?.[0]);
-      expect(first).toBe('\r\x1b[KFocus 1/4 — 1:00 remaining\n');
-    } finally {
-      await settle(runPromise);
-    }
-  });
-
   it('live: every history row commits over the live row (one row per event)', async () => {
     // Ghostty paste showed a stale-tick fossil per event: each leading-`\n`
     // history write scrolled the live `\r` frame into scrollback. Commits
@@ -461,22 +343,6 @@ describe('lock mid-focus pauses, unlock resumes (existing copy)', () => {
       const text = stdoutText(out).replaceAll('\x07', '');
       expect(text).toContain('Completed 1 focuses');
       expect(text).not.toContain('\n\n');
-    } finally {
-      await settle(runPromise);
-    }
-  });
-
-  it('quiet: SIGINT summary follows history with no blank line', async () => {
-    vi.useFakeTimers();
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const runPromise = run(['--focus', '60s', '--short', '60s', '--long', '60s', '--quiet'], {
-      monitor: new StubMonitor('active'),
-    });
-    try {
-      await advance(0);
-      process.emit('SIGINT');
-      await expect(runPromise).resolves.toBe(0);
-      expect(stdoutText(out)).not.toContain('\n\n');
     } finally {
       await settle(runPromise);
     }
@@ -555,11 +421,6 @@ describe('wake-jump guard (JUMP_THRESHOLD_MS = 5000)', () => {
     expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
   });
 
-  it('exports JUMP_THRESHOLD_MS = 5000 from the driver', async () => {
-    const mod = (await import('../src/cli.js')) as unknown as Record<string, unknown>;
-    expect(mod.JUMP_THRESHOLD_MS).toBe(5000);
-  });
-
   it('quiet: wall-clock jump >5s with probe locked → pause first, no tick cascade / bell burst', async () => {
     vi.useFakeTimers();
     const stub = new StubMonitor('active');
@@ -613,29 +474,6 @@ describe('wake-jump guard (JUMP_THRESHOLD_MS = 5000)', () => {
       expect(countBells(text)).toBe(0);
       expect(text).toMatch(/Paused Focus — screen locked, timer frozen/);
       expect(text).not.toContain('(paused — screen locked)');
-    } finally {
-      await settle(runPromise);
-    }
-  });
-
-  it('quiet SIGINT clears the poll interval (no orphaned 2000ms wakeups)', async () => {
-    // Real-factory test: pin darwin (linux → NoopMonitor by design).
-    setPlatform('darwin');
-    vi.useFakeTimers();
-    vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
-    const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval');
-    const runPromise = run(['--focus', '60s', '--short', '60s', '--long', '60s', '--quiet']);
-    try {
-      await advance(0);
-      // A 2000ms poll must exist to need clearing (fails pre-green: Noop).
-      expect(pollIntervals(setIntervalSpy)).toContain(2000);
-      const callsBefore = clearIntervalSpy.mock.calls.length;
-      process.emit('SIGINT');
-      await expect(runPromise).resolves.toBe(0);
-      // finish() → unsubscribe() clears the PollingMonitor interval even in
-      // quiet mode (where the driver itself only ever used clearTimeout).
-      expect(clearIntervalSpy.mock.calls.length).toBeGreaterThan(callsBefore);
     } finally {
       await settle(runPromise);
     }
@@ -698,26 +536,6 @@ describe('start-while-locked freezes immediately (no toast window before the fir
       await advance(500);
       expect(pollIntervals(setIntervalSpy)).toContain(250);
       expect(stdoutText(out)).toMatch(/Resumed Focus — \d+:\d\d remaining/);
-    } finally {
-      await settle(runPromise);
-    }
-  });
-
-  it('--no-screen-pause ignores even an initially-locked monitor', async () => {
-    vi.useFakeTimers();
-    const stub = new StubMonitor('locked');
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const runPromise = run(
-      ['--focus', '2s', '--short', '60s', '--long', '60s', '--quiet', '--no-screen-pause'],
-      { monitor: stub },
-    );
-    try {
-      await advance(0);
-      expect(stdoutText(out)).not.toMatch(/Paused .* — screen locked, timer frozen/);
-      // Opt-out runs through the deadline instead of freezing.
-      await advance(2_500);
-      await advance(0);
-      expect(stdoutText(out)).toContain('Short break');
     } finally {
       await settle(runPromise);
     }

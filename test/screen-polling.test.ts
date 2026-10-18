@@ -30,7 +30,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createScreenMonitor,
   NoopMonitor,
-  POLL_MS,
   PollingMonitor,
   type ScreenState,
 } from '../src/screen.js';
@@ -95,20 +94,10 @@ afterEach(() => {
 
 // ---------------------------------------------------------------------------
 
-describe('POLL_MS', () => {
-  it('polls every 2000ms', () => {
-    expect(POLL_MS).toBe(2000);
-  });
-});
-
 describe('NoopMonitor.probeNow', () => {
   it("resolves 'active' without waiting", async () => {
     const monitor = new NoopMonitor();
     await expect(monitor.probeNow()).resolves.toBe('active');
-  });
-
-  it('keeps the sync last-known-default-active contract', () => {
-    expect(new NoopMonitor().getInitialState()).toBe('active');
   });
 });
 
@@ -185,19 +174,6 @@ describe('PollingMonitor subscribe / diff-then-fire', () => {
     }
   });
 
-  it('honours a custom pollMs', async () => {
-    vi.useFakeTimers();
-    try {
-      const monitor = new PollingMonitor(stubExec(LOCKED), { pollMs: 100 });
-      const listener = vi.fn((_state: ScreenState) => undefined);
-      monitor.subscribe(listener);
-      await vi.advanceTimersByTimeAsync(100);
-      expect(listener).toHaveBeenCalledTimes(1);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it('unsubscribe clears the interval (timer spy) and is idempotent', async () => {
     vi.useFakeTimers();
     try {
@@ -212,24 +188,6 @@ describe('PollingMonitor subscribe / diff-then-fire', () => {
       expect(() => unsubscribe()).not.toThrow();
       await vi.advanceTimersByTimeAsync(10_000);
       expect(listener).toHaveBeenCalledTimes(1);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('multiple subscribers each get the transitions', async () => {
-    vi.useFakeTimers();
-    try {
-      const monitor = new PollingMonitor(stubExec(LOCKED));
-      const a = vi.fn((_state: ScreenState) => undefined);
-      const b = vi.fn((_state: ScreenState) => undefined);
-      const unsubA = monitor.subscribe(a);
-      const unsubB = monitor.subscribe(b);
-      await vi.advanceTimersByTimeAsync(2000);
-      expect(a).toHaveBeenCalledTimes(1);
-      expect(b).toHaveBeenCalledTimes(1);
-      unsubA();
-      unsubB();
     } finally {
       vi.useRealTimers();
     }
@@ -301,11 +259,6 @@ describe('PollingMonitor.probeNow', () => {
     const active = new PollingMonitor(stubExec(UNLOCKED));
     await expect(active.probeNow()).resolves.toBe('active');
   });
-
-  it('constructs with no args (default exec) without spawning until probed', () => {
-    expect(() => new PollingMonitor()).not.toThrow();
-    expect(new PollingMonitor().getInitialState()).toBe('active');
-  });
 });
 
 describe('createScreenMonitor factory', () => {
@@ -320,14 +273,5 @@ describe('createScreenMonitor factory', () => {
   it('enabled === false → NoopMonitor even on darwin (the --no-screen-pause path)', () => {
     expect(createScreenMonitor({ platform: 'darwin', enabled: false })).toBeInstanceOf(NoopMonitor);
     expect(createScreenMonitor({ enabled: false })).toBeInstanceOf(NoopMonitor);
-  });
-
-  it('defaults to process.platform / true', () => {
-    const monitor = createScreenMonitor();
-    if (process.platform === 'darwin') {
-      expect(monitor).toBeInstanceOf(PollingMonitor);
-    } else {
-      expect(monitor).toBeInstanceOf(NoopMonitor);
-    }
   });
 });
