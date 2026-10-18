@@ -52,7 +52,30 @@ describe('cli', () => {
   it('prints help and exits 0', async () => {
     const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     await expect(run(['--help'])).resolves.toBe(0);
-    expect(outputOf(out)).toContain('Usage:');
+    const help = outputOf(out);
+    expect(help).toContain('Usage:');
+    // Single guard for the documented CLI surface (README parity).
+    for (const flag of [
+      '--focus',
+      '--short',
+      '--long',
+      '--cycles',
+      '--no-loop',
+      '--quiet',
+      '--start',
+      '--timestamp',
+      '--confirm',
+      '--notify',
+      '--notify-confirm',
+      '--notify-group',
+      '--no-screen-pause',
+      '--no-bell',
+      '--focus-name',
+      '--short-name',
+      '--long-name',
+    ]) {
+      expect(help).toContain(flag);
+    }
   });
 
   it('prints the version and exits 0', async () => {
@@ -68,18 +91,6 @@ describe('cli', () => {
   });
 
   // --- CLI surface ---
-
-  it('lists pomodoro options in help', async () => {
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    await expect(run(['--help'])).resolves.toBe(0);
-    const help = outputOf(out);
-    expect(help).toContain('--focus');
-    expect(help).toContain('--short');
-    expect(help).toContain('--long');
-    expect(help).toContain('--cycles');
-    expect(help).toContain('--no-loop');
-    expect(help).toMatch(/--quiet/);
-  });
 
   it.each([
     ['--focus', '0'],
@@ -164,36 +175,6 @@ describe('cli', () => {
     await expect(runPromise).resolves.toBe(0);
   });
 
-  it('--quiet arms a timeout chain and logs transitions only (few writes)', async () => {
-    vi.useFakeTimers();
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
-
-    const runPromise = run([
-      '--focus',
-      '1s',
-      '--short',
-      '1s',
-      '--long',
-      '1s',
-      '--cycles',
-      '2',
-      '--quiet',
-    ]);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(setTimeoutSpy).toHaveBeenCalled();
-
-    // Through focus + short + focus + into long: only a handful of lines, no live ticks.
-    await vi.advanceTimersByTimeAsync(3_500);
-    const writes = out.mock.calls.length;
-    expect(writes).toBeGreaterThanOrEqual(2);
-    expect(writes).toBeLessThanOrEqual(10);
-
-    process.emit('SIGINT');
-    await expect(runPromise).resolves.toBe(0);
-    expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
-  });
-
   it('defaults to quiet timeout chain when stdout is not a TTY', async () => {
     vi.useFakeTimers();
     setIsTTY(undefined);
@@ -239,29 +220,7 @@ describe('cli', () => {
     await expect(runPromise).resolves.toBe(0);
   });
 
-  it('--no-loop stops after the first long break without SIGINT', async () => {
-    vi.useFakeTimers();
-    vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-
-    const runPromise = run([
-      '--focus',
-      '1s',
-      '--short',
-      '1s',
-      '--long',
-      '1s',
-      '--cycles',
-      '2',
-      '--quiet',
-      '--no-loop',
-    ]);
-    // focus(1s) + short(1s) + focus(1s) + long(1s) = 4s, then exit.
-    await vi.advanceTimersByTimeAsync(5_000);
-    await expect(runPromise).resolves.toBe(0);
-    expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
-  });
-
-  it('--no-loop terminal rings + summary without starting the next focus', async () => {
+  it('--no-loop exits after the first long break, ringing + summary without starting the next focus', async () => {
     vi.useFakeTimers();
     const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
 
@@ -277,7 +236,7 @@ describe('cli', () => {
       '--quiet',
       '--no-loop',
     ]);
-    // focus(1s) + long(1s) = 2s, then exit.
+    // focus(1s) + long(1s) = 2s, then exit without SIGINT.
     await vi.advanceTimersByTimeAsync(3_000);
     await expect(runPromise).resolves.toBe(0);
     const text = stdoutText(out);

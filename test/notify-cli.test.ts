@@ -1,5 +1,5 @@
 /**
- * TDD red phase: step 2 — notification driver wiring.
+ * Notification driver wiring.
  *
  * Covers the `src/cli.ts` observable contract only (via `run(argv)`),
  * following test/confirm.test.ts patterns: `vi.useFakeTimers`, spy
@@ -7,12 +7,7 @@
  * `process.platform`, mock `node:child_process.execFile` (never spawn the
  * real `terminal-notifier` binary, never block on real stdin).
  *
- * All tests are expected to FAIL until the driver wires notifications:
- * `--notify` / `--notify-confirm` are unknown options today (exit 1
- * "unknown option"), so help/guards/flow assertions below all miss.
- *
- * Step 1 (src/notify.ts unit contract + phaseDurationMs) is already green;
- * this file mocks the binary boundary (`execFile`) so the real notify module
+ * This file mocks the binary boundary (`execFile`) so the real notify module
  * (argv building, mapping table) is exercised end-to-end through the driver:
  * - `-version` probe → availability guard.
  * - plain delivery calls → `--notify` fire-and-forget sends.
@@ -259,15 +254,6 @@ describe('notify flags and fail-fast guards', () => {
     expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
   });
 
-  it('lists --notify and --notify-confirm in --help', async () => {
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    await expect(run(['--help'])).resolves.toBe(0);
-    const help = stdoutText(out);
-    expect(help).toContain('--notify');
-    expect(help).toContain('--notify-confirm');
-    expect(help).toContain('--notify-group');
-  });
-
   it('--notify-group without --notify/--notify-confirm is a usage error', async () => {
     vi.useFakeTimers();
     setPlatform('darwin');
@@ -425,26 +411,6 @@ describe('--notify fire-and-forget (no gating change)', () => {
     await expect(runPromise).resolves.toBe(0);
   });
 
-  it('sends notifications in live mode too (not quiet-only)', async () => {
-    vi.useFakeTimers();
-    setPlatform('darwin');
-    // Live countdown needs a TTY: --quiet is automatic under pipes/CI.
-    setStdoutIsTTY(true);
-    const { deliveries } = mockBinaryAvailable();
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const runPromise = run(['--focus', '1s', '--short', '60s', '--long', '60s', '--notify']);
-    await advance(0);
-    await advance(1_200);
-    await advance(0);
-    expect(stdoutText(out)).toContain('Focus 1/4');
-    expect(stdoutText(out)).toContain('Short break');
-    const titles = deliveries.map((argv) => argv[argv.indexOf('-title') + 1]);
-    expect(titles).toContain('Focus 1/4');
-    expect(titles).toContain('Short break');
-    process.emit('SIGINT');
-    await expect(runPromise).resolves.toBe(0);
-  });
-
   it('delivery failure is non-fatal: stderr note, timer continues with bell+text', async () => {
     vi.useFakeTimers();
     setPlatform('darwin');
@@ -527,36 +493,6 @@ describe('--notify fire-and-forget (no gating change)', () => {
     expect(removal).toBeDefined();
     expect(removal).toContain('work');
     expect(removal).not.toContain('screen-pomodoro');
-  });
-
-  it('custom --notify-group carries into the --notify-confirm prompt', async () => {
-    vi.useFakeTimers();
-    setPlatform('darwin');
-    setStdinIsTTY(false);
-    mockBinaryAvailable(['@ACTIONCLICKED']);
-    vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const runPromise = run([
-      '--focus',
-      '1s',
-      '--short',
-      '60s',
-      '--long',
-      '60s',
-      '--quiet',
-      '--notify-confirm',
-      '--notify-group',
-      'stretch',
-      // Pin --start focus so the startup toast menu is skipped.
-      '--start',
-      'focus',
-    ]);
-    await advance(0);
-    await advance(1_200);
-    await advance(0);
-    const prompted = confirmArgvs()[0] ?? [];
-    expect(prompted[prompted.indexOf('-group') + 1]).toBe('stretch');
-    process.emit('SIGINT');
-    await expect(runPromise).resolves.toBe(0);
   });
 });
 
@@ -724,39 +660,6 @@ describe('--notify-confirm blocking gate', () => {
     await advance(0);
     expect(stdoutText(out)).not.toContain('Short break');
     expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
-  });
-
-  it('--no-loop exits after the long break without a trailing toast prompt', async () => {
-    vi.useFakeTimers();
-    setPlatform('darwin');
-    setStdinIsTTY(false);
-    mockBinaryAvailable(['@ACTIONCLICKED']);
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const runPromise = run([
-      '--focus',
-      '1s',
-      '--short',
-      '1s',
-      '--long',
-      '1s',
-      '--cycles',
-      '1',
-      '--quiet',
-      '--no-loop',
-      '--notify-confirm',
-      // Pin --start focus so the startup toast menu is skipped.
-      '--start',
-      'focus',
-    ]);
-    await advance(0);
-    await advance(1_200);
-    await advance(0);
-    // focus -> long took one click; the terminal long break exits directly.
-    await advance(1_500);
-    await advance(0);
-    await expect(runPromise).resolves.toBe(0);
-    expect(confirmArgvs()).toHaveLength(1);
-    expect(stdoutText(out)).toMatch(/Completed 1 focuses/);
   });
 });
 

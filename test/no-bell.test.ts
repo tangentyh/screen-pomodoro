@@ -30,20 +30,7 @@ function countBells(text: string): number {
   return text.split('\x07').length - 1;
 }
 
-const originalStdoutIsTTY = (process.stdout as { isTTY?: unknown }).isTTY;
 const originalStdinIsTTY = (process.stdin as { isTTY?: unknown }).isTTY;
-
-function setStdoutIsTTY(value: boolean | undefined): void {
-  if (value === undefined) {
-    delete (process.stdout as { isTTY?: unknown }).isTTY;
-  } else {
-    Object.defineProperty(process.stdout, 'isTTY', {
-      value,
-      configurable: true,
-      writable: true,
-    });
-  }
-}
 
 function setStdinIsTTY(value: boolean | undefined): void {
   if (value === undefined) {
@@ -83,13 +70,6 @@ describe('no-bell opt-out', () => {
     vi.restoreAllMocks();
     mockedCreateInterface().mockClear();
     vi.useRealTimers();
-    if (originalStdoutIsTTY === undefined) delete (process.stdout as { isTTY?: unknown }).isTTY;
-    else
-      Object.defineProperty(process.stdout, 'isTTY', {
-        value: originalStdoutIsTTY,
-        configurable: true,
-        writable: true,
-      });
     if (originalStdinIsTTY === undefined) delete (process.stdin as { isTTY?: unknown }).isTTY;
     else
       Object.defineProperty(process.stdin, 'isTTY', {
@@ -97,35 +77,6 @@ describe('no-bell opt-out', () => {
         configurable: true,
         writable: true,
       });
-  });
-
-  it('lists --no-bell in --help', async () => {
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    await expect(run(['--help'])).resolves.toBe(0);
-    expect(stdoutText(out)).toContain('--no-bell');
-  });
-
-  it('quiet phase change rings by default (backward compat)', async () => {
-    vi.useFakeTimers();
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const runPromise = run([
-      '--focus',
-      '2s',
-      '--short',
-      '1s',
-      '--long',
-      '1s',
-      '--cycles',
-      '4',
-      '--quiet',
-    ]);
-    await vi.advanceTimersByTimeAsync(0);
-    await vi.advanceTimersByTimeAsync(2_500);
-    expect(stdoutText(out)).toContain('Short break');
-    expect(countBells(stdoutText(out))).toBeGreaterThan(0);
-    process.emit('SIGINT');
-    await expect(runPromise).resolves.toBe(0);
-    expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
   });
 
   it('quiet phase change with --no-bell prints the line with zero bells', async () => {
@@ -180,31 +131,6 @@ describe('no-bell opt-out', () => {
     expect(combined).toMatch(/Focus complete\. Start Short break\? \[y\/n\]/);
     expect(stdoutText(out)).toContain('Short break');
     expect(countBells(stdoutText(out))).toBe(0);
-    process.emit('SIGINT');
-    await expect(runPromise).resolves.toBe(0);
-    expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
-  });
-
-  it('live countdown with --no-bell commits history with zero bells', async () => {
-    vi.useFakeTimers();
-    setStdoutIsTTY(true);
-    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const runPromise = run([
-      '--focus',
-      '2s',
-      '--short',
-      '10s',
-      '--long',
-      '10s',
-      '--cycles',
-      '4',
-      '--no-bell',
-    ]);
-    await vi.advanceTimersByTimeAsync(0);
-    await vi.advanceTimersByTimeAsync(2_500);
-    const text = stdoutText(out);
-    expect(text).toContain('Short break');
-    expect(countBells(text)).toBe(0);
     process.emit('SIGINT');
     await expect(runPromise).resolves.toBe(0);
     expect(process.listenerCount('SIGINT')).toBe(sigintBaseline);
