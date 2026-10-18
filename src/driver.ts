@@ -29,13 +29,13 @@ import { createTimer, type Phase, type PomodoroConfig } from './timer.js';
 import { createScreenMonitor, type ScreenMonitor, type ScreenState } from './screen.js';
 import { createStdinAsker, createStdinConfirmer } from './confirm-stdin.js';
 
-/** Wake-jump guard threshold per 005 D6: drift beyond this probes before ticking. */
+/** Wake-jump guard threshold: drift beyond this probes before ticking. */
 export const JUMP_THRESHOLD_MS = 5000;
 
-/** 012: how often a pending `--notify-confirm` toast is probed for Clear All. */
+/** How often a pending `--notify-confirm` toast is probed for Clear All. */
 export const CLEAR_POLL_MS = 3000;
 
-/** 012: consecutive empty probes required before the toast is believed cleared. */
+/** Consecutive empty probes required before the toast is believed cleared. */
 export const CLEAR_POLL_MISSES = 2;
 
 export interface DriverFlags {
@@ -48,7 +48,7 @@ export interface DriverFlags {
   notifyConfirm: boolean;
   notifyGroup: string;
   screenPause: boolean;
-  /** `--no-bell` silences every `\x07` (010); default rings. */
+  /** `--no-bell` silences every `\x07`; default rings. */
   bell: boolean;
   /**
    * Explicit `--start` phase. When omitted, stdin `--confirm` asks once at
@@ -73,7 +73,7 @@ function render(liveLine: string): void {
 }
 
 /**
- * Commit a history row over the live countdown row (tidy 006). Every live
+ * Commit a history row over the live countdown row. Every live
  * `\n` history write used to scroll the in-progress `\r` frame into
  * scrollback as a stale-tick fossil (one duplicate row per event in a
  * Ghostty paste). `\r` + EL erases the frame first, so each event leaves
@@ -144,13 +144,13 @@ export function startDriver(
    */
   let confirmResendRequested = false;
   /**
-   * Clear-All watchdog (012): a pending `--notify-confirm` toast is probed
+   * Clear-All watchdog: a pending `--notify-confirm` toast is probed
    * with `-list <group>` so a Notification Center "Clear All" re-sends it
    * instead of stranding the timer behind an invisible prompt.
    */
   let clearWatchdog: ReturnType<typeof setInterval> | undefined;
   let clearMisses = 0;
-  // Wake-jump guard (005 D6): wall-clock of the last live tick. Quiet drift
+  // Wake-jump guard: wall-clock of the last live tick. Quiet drift
   // is measured per-timeout via its scheduled-at stamp (see armQuietTimeout).
   let lastLiveWallMs = Date.now();
 
@@ -222,13 +222,13 @@ export function startDriver(
   }
 
   /**
-   * Clear-All probe (012). Notification Center's "Clear All" removes the
+   * Clear-All probe. Notification Center's "Clear All" removes the
    * delivered toast without emitting the `@CLOSED` a single dismiss would,
    * so the blocking `-action` child would wait forever behind an invisible
    * prompt. `terminal-notifier -list <group>` prints nothing once the group
    * is empty, which is the only signal available. One empty probe can race
    * the just-posted toast, so two consecutive empties are required; a failed
-   * probe is "unknown" and never resends. Skipped while locked (007: nothing
+   * probe is "unknown" and never resends. Skipped while locked (nothing
    * fires on a locked screen) and whenever no child is actually waiting.
    */
   async function pollDelivered(): Promise<void> {
@@ -557,7 +557,7 @@ export function startDriver(
       // No-op without --notify/--notify-confirm (guarded inside).
       removeToast();
       if (flags.live) {
-        // Tidy 006: history replaces the suffix; suspend ticks while paused
+        // History replaces the suffix; suspend ticks while paused
         // (idle like quiet — only the 2000ms poll stays armed).
         commitLiveLine(stamp(buildPausedLine(timer, names), now));
         if (interval !== undefined) {
@@ -588,7 +588,7 @@ export function startDriver(
   }
 
   async function checkWakeJump(isLive: boolean, quietScheduledAtMs: number): Promise<boolean> {
-    // 005 D6: lid-close sleep freezes the process; on wake Date.now() jumps
+    // Wake-jump guard: lid-close sleep freezes the process; on wake Date.now() jumps
     // and the first tick would cascade expired phases with rapid bells before
     // the next poll notices we're locked. Probe first on large drift and
     // apply a lock-freeze before any tick(). Returns true to skip ticking.
@@ -620,7 +620,7 @@ export function startDriver(
     if (finished || confirmPending) return;
     if (await checkWakeJump(true, 0)) return;
     const now = Date.now();
-    // Tidy 006: no suffix redraws while paused (interval is suspended on
+    // No suffix redraws while paused (interval is suspended on
     // lock; this guard covers races where a tick was already queued).
     if (timer.paused) return;
     if (timer.remainingMs(now) > 0) {
@@ -703,10 +703,10 @@ export function startDriver(
     const initial = await resolveInitialPhase();
     if (finished || initial === undefined) return;
     // Anchor the first deadline to the answer moment: menu dwell must not
-    // eat into the first phase (startup parity with frozen gating, 003a).
+    // eat into the first phase (startup parity with frozen gating).
     timer.start(Date.now(), initial);
     // Reset the wake-jump baseline past any menu dwell so the first live
-    // tick never mistakes choosing time for a lid-close jump (005 D6).
+    // tick never mistakes choosing time for a lid-close jump.
     lastLiveWallMs = Date.now();
     unsubscribe = monitor.subscribe(onScreenState);
 

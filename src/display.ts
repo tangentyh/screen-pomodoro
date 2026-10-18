@@ -130,7 +130,7 @@ export function buildPhaseLine(
 }
 
 /**
- * Build the persistent pause history line (006). Shared by live and quiet
+ * Build the persistent pause history line. Shared by live and quiet
  * so both modes log identical copy; the live in-place suffix stays separate.
  */
 export function buildPausedLine(
@@ -141,7 +141,7 @@ export function buildPausedLine(
 }
 
 /**
- * Build the persistent resume history line (006). Shared by live and quiet.
+ * Build the persistent resume history line. Shared by live and quiet.
  */
 export function buildResumedLine(
   timer: PomodoroTimer,

@@ -1,12 +1,12 @@
 /**
- * docs/005-screen-lock-macos.md — step 2: driver wiring (green).
+ * Step 2: driver wiring (green).
  *
  * Covers the `src/cli.ts` observable contract via `run(argv)`, following
  * test/confirm.test.ts patterns: `vi.useFakeTimers`, spy `stdout.write`,
  * `defineProperty(process.stdout, 'isTTY')` — never a real `ioreg` spawn,
  * never real stdin.
  *
- * Driver contract under test (per 005 Architecture + D1–D8):
+ * Driver contract under test:
  * - `--no-screen-pause` opt-out flag (default: pause on).
  * - Factory wiring: default arms the 2000ms poll on darwin (PollingMonitor),
  *   opt-out stays fully idle (NoopMonitor, zero wakeups).
@@ -67,7 +67,7 @@ async function advance(ms: number): Promise<void> {
 }
 
 /**
- * Hermetic stub monitor per 005 ("injected stub monitor, never real ioreg").
+ * Hermetic stub monitor ("injected stub monitor, never real ioreg").
  * No real timers, no spawns: `fire()` drives subscription transitions
  * synchronously, `probeNow()` resolves `probeState` for the wake-jump guard.
  */
@@ -131,7 +131,7 @@ async function settle(runPromise: Promise<number>): Promise<void> {
 
 // ---------------------------------------------------------------------------
 
-describe('005 step 2 — --no-screen-pause flag', () => {
+describe('--no-screen-pause flag', () => {
   let sigintBaseline = 0;
 
   beforeEach(() => {
@@ -168,14 +168,14 @@ describe('005 step 2 — --no-screen-pause flag', () => {
   });
 });
 
-describe('005 step 2 — factory wiring: default polls, opt-out stays idle', () => {
+describe('factory wiring: default polls, opt-out stays idle', () => {
   let sigintBaseline = 0;
 
   beforeEach(() => {
     sigintBaseline = process.listenerCount('SIGINT');
     // Factory picks the backend from process.platform: pin darwin so the
     // default-path assertions below hold on any CI OS (linux → NoopMonitor
-    // by design, per 005). No probe fires here (advance(0) only), so this
+    // by design). No probe fires here (advance(0) only), so this
     // stays hermetic — no real ioreg spawn.
     setPlatform('darwin');
   });
@@ -254,7 +254,7 @@ describe('005 step 2 — factory wiring: default polls, opt-out stays idle', () 
       const runPromise = run(['--focus', '60s', '--short', '60s', '--long', '60s', '--quiet']);
       try {
         await advance(0);
-        // Per 005 the factory returns NoopMonitor off-darwin: the timer
+        // The factory returns NoopMonitor off-darwin: the timer
         // runs, but no screen poll is armed.
         expect(pollIntervals(setIntervalSpy)).not.toContain(2000);
       } finally {
@@ -266,7 +266,7 @@ describe('005 step 2 — factory wiring: default polls, opt-out stays idle', () 
   });
 });
 
-describe('005 step 2 — lock mid-focus pauses, unlock resumes (existing copy)', () => {
+describe('lock mid-focus pauses, unlock resumes (existing copy)', () => {
   let sigintBaseline = 0;
 
   beforeEach(() => {
@@ -319,7 +319,7 @@ describe('005 step 2 — lock mid-focus pauses, unlock resumes (existing copy)',
       await advance(500);
       stub.fire('locked');
       await advance(0);
-      // 006 tidy: history replaces the suffix (no ephemeral duplicate).
+      // History replaces the suffix (no ephemeral duplicate).
       expect(stdoutText(out)).not.toContain('(paused — screen locked)');
       expect(stdoutText(out)).toMatch(/Paused Focus — screen locked, timer frozen/);
       expect(countBells(stdoutText(out))).toBe(0);
@@ -540,7 +540,7 @@ describe('005 step 2 — lock mid-focus pauses, unlock resumes (existing copy)',
   });
 });
 
-describe('005 step 2 — wake-jump guard (D6: JUMP_THRESHOLD_MS = 5000)', () => {
+describe('wake-jump guard (JUMP_THRESHOLD_MS = 5000)', () => {
   let sigintBaseline = 0;
 
   beforeEach(() => {
@@ -619,7 +619,7 @@ describe('005 step 2 — wake-jump guard (D6: JUMP_THRESHOLD_MS = 5000)', () => 
   });
 
   it('quiet SIGINT clears the poll interval (no orphaned 2000ms wakeups)', async () => {
-    // Real-factory test: pin darwin (linux → NoopMonitor by design, per 005).
+    // Real-factory test: pin darwin (linux → NoopMonitor by design).
     setPlatform('darwin');
     vi.useFakeTimers();
     vi.spyOn(process.stdout, 'write').mockImplementation(() => true);

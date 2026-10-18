@@ -1,15 +1,15 @@
 /**
- * TDD red phase for docs/004-desktop-notifications-macos.md — step 1.
+ * TDD red phase: step 1 — notification builders.
  *
  * Covers the `src/notify.ts` unit contract only (pure builders + injectable
  * exec fakes), following test/confirm.test.ts patterns: inject fakes, never
  * spawn the real `terminal-notifier` binary, never block.
  *
- * All tests are expected to FAIL until 004 is implemented:
+ * All tests are expected to FAIL until notifications are implemented:
  * - `src/notify.ts` does not exist yet (import error = red).
  * - `phaseDurationMs` is not exported from `src/timer.ts` yet.
  *
- * Proposed API under test (per 004 Architecture + Decisions D1–D10):
+ * Proposed API under test:
  * - GROUP_ID / SOUND constants
  * - isNotifySupported(platform?)
  * - escapeNotifierMessage(s)
@@ -94,14 +94,14 @@ afterEach(() => {
 
 // ---------------------------------------------------------------------------
 
-describe('004 — notify constants', () => {
+describe('notify constants', () => {
   it('uses a single stable group and Bottle sound (D3)', () => {
     expect(GROUP_ID).toBe('screen-pomodoro');
     expect(SOUND).toBe('Bottle');
   });
 });
 
-describe('004 — isNotifySupported', () => {
+describe('isNotifySupported', () => {
   it('darwin → true, linux/win32 → false', () => {
     expect(isNotifySupported('darwin')).toBe(true);
     expect(isNotifySupported('linux')).toBe(false);
@@ -113,7 +113,7 @@ describe('004 — isNotifySupported', () => {
   });
 });
 
-describe('004 — escapeNotifierMessage (D5)', () => {
+describe('escapeNotifierMessage', () => {
   it('prefix-escapes a leading [ as \\[', () => {
     expect(escapeNotifierMessage('[Coffee] break')).toBe('\\[Coffee] break');
   });
@@ -132,7 +132,7 @@ describe('004 — escapeNotifierMessage (D5)', () => {
   });
 });
 
-describe('004 — phaseDurationMs in timer.ts (D7 + D10)', () => {
+describe('phaseDurationMs in timer.ts', () => {
   it('is a pure nominal lookup: focus/short/long from config', () => {
     expect(phaseDurationMs(CONFIG, 'focus')).toBe(25 * 60_000);
     expect(phaseDurationMs(CONFIG, 'shortBreak')).toBe(5 * 60_000);
@@ -140,7 +140,7 @@ describe('004 — phaseDurationMs in timer.ts (D7 + D10)', () => {
   });
 });
 
-describe('004 — buildNotifyTitle (D9: entered side, counter focus-only)', () => {
+describe('buildNotifyTitle (entered side, counter focus-only)', () => {
   it('25m focus → 5m break gives title `Short break` (no counter on breaks)', () => {
     // focusCount=1: one focus completed, now entering the break.
     expect(buildNotifyTitle('shortBreak', CONFIG, DEFAULT_PHASE_NAMES, 1)).toBe('Short break');
@@ -171,7 +171,7 @@ describe('004 — buildNotifyTitle (D9: entered side, counter focus-only)', () =
   });
 });
 
-describe('004 — buildNotifyMessage (D9 + D7 nominal clocks)', () => {
+describe('buildNotifyMessage (nominal clocks)', () => {
   it('25m focus → 5m break: `25:00 spent on Focus. Short break — 5:00 remaining`', () => {
     expect(buildNotifyMessage('focus', 'shortBreak', CONFIG, DEFAULT_PHASE_NAMES, 1)).toBe(
       '25:00 spent on Focus. Short break — 5:00 remaining',
@@ -213,7 +213,7 @@ describe('004 — buildNotifyMessage (D9 + D7 nominal clocks)', () => {
   });
 });
 
-describe('011 — confirm copy (amends 004 D6)', () => {
+describe('confirm copy', () => {
   it('title states the proposal: `Focus complete. Start Short break?`', () => {
     expect(buildNotifyConfirmTitle('focus', 'shortBreak', CONFIG, DEFAULT_PHASE_NAMES, 1)).toBe(
       'Focus complete. Start Short break?',
@@ -254,7 +254,7 @@ describe('011 — confirm copy (amends 004 D6)', () => {
   });
 });
 
-describe('004 — checkNotifierAvailable (startup guard)', () => {
+describe('checkNotifierAvailable (startup guard)', () => {
   it('runs `terminal-notifier -version` once and resolves on success', async () => {
     const exec = okExec('3.0.0\n');
     await expect(checkNotifierAvailable(exec)).resolves.toBeUndefined();
@@ -285,7 +285,7 @@ describe('004 — checkNotifierAvailable (startup guard)', () => {
   });
 });
 
-describe('012 — isNotificationDelivered (Clear-All probe)', () => {
+describe('isNotificationDelivered (Clear-All probe)', () => {
   it('runs `terminal-notifier -list <group>` and treats a non-empty table as delivered', async () => {
     const exec = okExec('GroupID\tTitle\tSubtitle\tMessage\tDelivered At\nx\tFocus\t\tmsg\tnow\n');
     await expect(isNotificationDelivered(exec, 'work')).resolves.toBe(true);
@@ -310,7 +310,7 @@ describe('012 — isNotificationDelivered (Clear-All probe)', () => {
   });
 });
 
-describe('004 — sendNotification (fire-and-forget)', () => {
+describe('sendNotification (fire-and-forget)', () => {
   it('delivers via execFile with -group/-sound/-title/-message as separate argv entries (no shell)', async () => {
     const exec = okExec('');
     await sendNotification(exec, {
@@ -367,7 +367,7 @@ describe('004 — sendNotification (fire-and-forget)', () => {
   });
 });
 
-describe('011 — createNotificationConfirmer mapping table (amends 004 D2)', () => {
+describe('createNotificationConfirmer mapping table', () => {
   function confirmerWith(
     outputs: (string | Error)[],
     opts?: { title?: string; message?: string; actionLabel?: string; isFinished?: () => boolean },
@@ -556,7 +556,7 @@ describe('011 — createNotificationConfirmer mapping table (amends 004 D2)', ()
   });
 });
 
-describe('008 — parseNotifyGroup + custom group isolation', () => {
+describe('parseNotifyGroup + custom group isolation', () => {
   it('defaults share GROUP_ID; custom group passes through verbatim', async () => {
     const exec = okExec('');
     await sendNotification(exec, { title: 't', message: 'm', group: 'work' });
@@ -597,7 +597,7 @@ describe('008 — parseNotifyGroup + custom group isolation', () => {
   });
 });
 
-describe('004 — module constraints (D1 driver-only, D5 execFile-only)', () => {
+describe('module constraints (driver-only, execFile-only)', () => {
   it('notify module imports no timer core and shells out via execFile only', async () => {
     const fs = await import('node:fs');
     const source = fs.readFileSync(new URL('../src/notify.ts', import.meta.url), 'utf8');
@@ -606,7 +606,7 @@ describe('004 — module constraints (D1 driver-only, D5 execFile-only)', () => 
   });
 });
 
-describe('009 — buildNotifyStartTitle/Message (startup toast menu)', () => {
+describe('buildNotifyStartTitle/Message (startup toast menu)', () => {
   it('title is `Choose starting phase`', () => {
     expect(buildNotifyStartTitle()).toBe('Choose starting phase');
   });
@@ -636,7 +636,7 @@ describe('009 — buildNotifyStartTitle/Message (startup toast menu)', () => {
   });
 });
 
-describe('009 — createNotificationStartChooser mapping', () => {
+describe('createNotificationStartChooser mapping', () => {
   type StartPhase = 'focus' | 'shortBreak' | 'longBreak';
   function chooserWith(
     outputs: (string | Error)[],

@@ -1,12 +1,12 @@
 /**
- * 004 — macOS desktop notifications via `terminal-notifier` (Homebrew only).
+ * macOS desktop notifications via `terminal-notifier` (Homebrew only).
  *
  * Platform-agnostic and fully injectable: the `terminal-notifier` binary is
  * reached through an `ExecFileFn` seam (default: promisified
  * `node:child_process.execFile`, argv array only — never a shell string), so
  * unit tests inject fakes and never spawn the real binary.
  *
- * Deliberately imports no `timer.ts` core (driver-only change per 004 D1;
+ * Deliberately imports no `timer.ts` core (driver-only change;
  * enforced by test/notify.test.ts): phase durations arrive as a structural
  * `{ focusMs, shortBreakMs, longBreakMs, cycles }` config compatible with
  * `PomodoroConfig`, and labels reuse `display.ts` helpers (never hardcoded).
@@ -44,7 +44,7 @@ export interface NotifyPayload {
 }
 
 export interface NotifyConfirmerOptions extends NotifyPayload {
-  /** Label for the restart `-action` button (011: `Restart <current>`). */
+  /** Label for the restart `-action` button (`Restart <current>`). */
   actionLabel: string;
   isFinished?: (() => boolean) | undefined;
   /**
@@ -60,7 +60,7 @@ export interface NotifyConfirmerOptions extends NotifyPayload {
 }
 
 // Structural mirrors of the timer core's `Phase` / `PomodoroConfig` — kept
-// local (not imported) so this module stays `timer.ts`-free per 004 D1.
+// local (not imported) so this module stays `timer.ts`-free.
 // `PomodoroConfig` values remain assignable here.
 type NotifyPhase = 'focus' | 'shortBreak' | 'longBreak';
 
@@ -95,7 +95,7 @@ export function escapeNotifierMessage(s: string): string {
   return s;
 }
 
-/** Nominal config lookup (same allowance as 003's helpers — no math change). */
+/** Nominal config lookup (no math change). */
 function notifyDurationMs(config: NotifyConfig, phase: NotifyPhase): number {
   switch (phase) {
     case 'focus':
@@ -184,8 +184,8 @@ export function buildNotifyMessage(
 }
 
 /**
- * Restart-button label (011, verb-first per HIG): `Restart <current>`.
- * Bare finished-side label (no focus counter) per 004 D9.
+ * Restart-button label (verb-first per HIG): `Restart <current>`.
+ * Bare finished-side label (no focus counter).
  */
 export function buildNotifyConfirmAction(current: NotifyPhase, names: PhaseNames): string {
   return `Restart ${phaseLabel(current, names)}`;
@@ -237,7 +237,7 @@ export async function checkNotifierAvailable(exec: ExecFileFn = defaultExec): Pr
 }
 
 /**
- * Presence probe for the Clear-All resend handshake (012): `terminal-notifier
+ * Presence probe for the Clear-All resend handshake: `terminal-notifier
  * -list <group>` prints a header row plus one row per delivered toast in the
  * group, and prints nothing when the group is empty. Notification Center's
  * "Clear All" (and any other external removal) drops the delivered rows
@@ -261,7 +261,7 @@ export async function sendNotification(
   try {
     await exec(NOTIFIER_BIN, baseArgv(opts.title, opts.message, opts.group ?? GROUP_ID));
   } catch (err) {
-    // Non-fatal by design (004 D4): a missed toast must not kill a focus.
+    // Non-fatal by design: a missed toast must not kill a focus.
     process.stderr.write(
       `terminal-notifier notification failed: ${err instanceof Error ? err.message : String(err)}\n`,
     );
@@ -271,7 +271,7 @@ export async function sendNotification(
 /**
  * Blocking restart-action confirmer implementing the driver `ConfirmFn` seam.
  * Click (`@ACTIONCLICKED`) = yes (start next), the restart button
- * (`actionLabel`, 011 `Restart <current>`) = no,
+ * (`actionLabel`, `Restart <current>`) = no,
  * `@CLOSED`/`@TIMEOUT` = re-send the same toast (shared `-group` replaces
  * in place); anything else or a spawn error resolves `false` with a stderr
  * note (never spins).
@@ -319,7 +319,7 @@ export function createNotificationConfirmer(
   };
 }
 
-/** Startup-menu toast copy (009): `Choose starting phase` + 3-way proposal. */
+/** Startup-menu toast copy: `Choose starting phase` + 3-way proposal. */
 export function buildNotifyStartTitle(): string {
   return 'Choose starting phase';
 }
@@ -346,7 +346,7 @@ export interface NotifyStartChooserOptions {
 
 /**
  * Blocking 3-way startup chooser for `--notify-confirm` without `--start`
- * (009 menu parity with the stdin asker). One toast with three `-action`
+ * (parity with the stdin asker). One toast with three `-action`
  * buttons (bare labels, repeated `-action` — never comma-joined; several
  * actions collapse into an Options menu on macOS and the outcome prints on
  * stdout). Mapping (trimmed): button title → `parseStartChoice` (same

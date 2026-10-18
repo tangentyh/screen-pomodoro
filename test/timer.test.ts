@@ -7,8 +7,7 @@ import {
   type Phase,
 } from '../src/timer.js';
 
-// Intended API per docs/002-pomodoro-cli-plan.md (TDD red phase — src/timer.ts
-// does not exist yet):
+// Intended API (TDD red phase — src/timer.ts does not exist yet):
 //   - Phase = 'focus' | 'shortBreak' | 'longBreak'
 //   - PomodoroConfig = { focusMs, shortBreakMs, longBreakMs, cycles } (all required)
 //   - parseDuration(input: string): number (ms, throws on invalid)

@@ -1,12 +1,12 @@
 /**
- * docs/005-screen-lock-macos.md — step 1: PollingMonitor (green).
+ * Step 1: PollingMonitor (green).
  *
  * Covers the `src/screen.ts` unit contract only (no driver change, low risk
- * per 005 Implementation order step 1), following test/notify.test.ts
+ * per the screen-lock implementation order), following test/notify.test.ts
  * patterns: stub exec fns, `vi.useFakeTimers`, spy `stderr.write` — never a
  * real `ioreg` spawn.
  *
- * Proposed API under test (per 005 Architecture + Decisions D1–D8):
+ * Proposed API under test:
  * - `POLL_MS = 2000`
  * - `ScreenMonitor` gains `probeNow(): Promise<ScreenState>`; sync
  *   `getInitialState()` stays last-known-default-active (D5).
@@ -36,7 +36,7 @@ import {
 } from '../src/screen.js';
 
 // ---------------------------------------------------------------------------
-// fixtures (per 005 Ground truth, Sequoia): top level pads with spaces
+// fixtures (macOS Sequoia ground truth): top level pads with spaces
 // (`"key" = Yes`), array entries don't (`"key"=Yes`) — regexes must be
 // whitespace-tolerant. `kCGSSessionOnConsoleKey` stays Yes while locked.
 // ---------------------------------------------------------------------------
@@ -95,13 +95,13 @@ afterEach(() => {
 
 // ---------------------------------------------------------------------------
 
-describe('005 — POLL_MS (D4)', () => {
+describe('POLL_MS', () => {
   it('polls every 2000ms', () => {
     expect(POLL_MS).toBe(2000);
   });
 });
 
-describe('005 — NoopMonitor.probeNow (D5)', () => {
+describe('NoopMonitor.probeNow', () => {
   it("resolves 'active' without waiting", async () => {
     const monitor = new NoopMonitor();
     await expect(monitor.probeNow()).resolves.toBe('active');
@@ -112,7 +112,7 @@ describe('005 — NoopMonitor.probeNow (D5)', () => {
   });
 });
 
-describe('005 — V1 parsing (Behavior + D2)', () => {
+describe('V1 parsing', () => {
   it.each<[string, string, ScreenState]>([
     ['top-level spaced `= Yes` → locked', LOCKED, 'locked'],
     ['unspaced `"key"=Yes` → locked (array-entry form)', LOCKED_NOSPACE, 'locked'],
@@ -144,7 +144,7 @@ describe('005 — V1 parsing (Behavior + D2)', () => {
   });
 });
 
-describe('005 — PollingMonitor subscribe / diff-then-fire (Behavior)', () => {
+describe('PollingMonitor subscribe / diff-then-fire', () => {
   it('assumes active initially, corrects to locked on the first poll within one pollMs', async () => {
     vi.useFakeTimers();
     try {
@@ -236,7 +236,7 @@ describe('005 — PollingMonitor subscribe / diff-then-fire (Behavior)', () => {
   });
 });
 
-describe('005 — PollingMonitor fail-open + note-once (D3)', () => {
+describe('PollingMonitor fail-open + note-once', () => {
   it('exec rejection → active + exactly one stderr note across many ticks', async () => {
     vi.useFakeTimers();
     try {
@@ -294,7 +294,7 @@ describe('005 — PollingMonitor fail-open + note-once (D3)', () => {
   });
 });
 
-describe('005 — PollingMonitor.probeNow (D5)', () => {
+describe('PollingMonitor.probeNow', () => {
   it('resolves current state without waiting for the interval', async () => {
     const locked = new PollingMonitor(stubExec(LOCKED));
     await expect(locked.probeNow()).resolves.toBe('locked');
@@ -308,7 +308,7 @@ describe('005 — PollingMonitor.probeNow (D5)', () => {
   });
 });
 
-describe('005 — createScreenMonitor factory', () => {
+describe('createScreenMonitor factory', () => {
   it('darwin → PollingMonitor', () => {
     expect(createScreenMonitor({ platform: 'darwin' })).toBeInstanceOf(PollingMonitor);
   });

@@ -1,5 +1,5 @@
 /**
- * docs/010-no-bell.md — `--no-bell` opt-out.
+ * `--no-bell` opt-out.
  *
  * Covers the observable CLI contract (via `run(argv)`), following
  * test/cli.test.ts + test/confirm.test.ts patterns: `vi.useFakeTimers`,
@@ -72,7 +72,7 @@ function mockReadlineQueue(answers: string[]): { prompts: string[] } {
   return { prompts };
 }
 
-describe('010 — no-bell opt-out', () => {
+describe('no-bell opt-out', () => {
   let sigintBaseline = 0;
 
   beforeEach(() => {

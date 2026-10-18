@@ -6,7 +6,7 @@ import {
   type ScreenState,
 } from '../src/screen.js';
 
-// Seam per docs/002-pomodoro-cli-plan.md (TDD red phase — src/screen.ts missing):
+// Screen seam contract (TDD red phase — src/screen.ts missing):
 //   - ScreenState distinguishes 'active' from locked-like states
 //   - ScreenMonitor = { subscribe(listener) => unsubscribe, getInitialState() }
 //   - NoopMonitor is always 'active' and never fires; the MVP wires it in so the
